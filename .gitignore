@@ -1,7 +1,57 @@
+# Secrets — never commit real .env files
 .env
-.env.*
-*.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.local.env
+
+# Docs & samples we DO want in git — override the greedy `.env.*` pattern below
+!.env.example
+!**/.env.example
+!.env.sample
+!**/.env.sample
+
+# Legacy catch-all (kept for safety; the ! rules above still let *.example through)
 credentials.json
 *.pem
 *.key
 .credentials
+
+# Runtime
+node_modules/
+**/node_modules/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Build output
+build/
+dist/
+frontend/build/
+mobile/dist/
+mobile/.expo/
+mobile/android/
+mobile/ios/
+
+# Uploads (user-generated content — never commit)
+backend/uploads/
+!backend/uploads/.gitkeep
+
+# Editor + OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
