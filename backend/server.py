@@ -16,7 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from core.config import get_settings
+from core.config import get_settings, validate_startup_config
 from core.db import ensure_indexes, get_db
 from core.response import envelope, error_envelope
 from core.security import now_utc
@@ -310,6 +310,11 @@ app.include_router(logs_router.router, prefix=API_V1)
 app.include_router(issues_router.router, prefix=API_V1)
 app.include_router(notifications_router.router, prefix=API_V1)
 app.include_router(uploads_router.router, prefix=API_V1)
+
+
+@app.get("/")
+async def root():
+    return envelope({"name": "ConstructOS API", "docs": "/api/v1/docs"})
 
 
 @app.get("/")

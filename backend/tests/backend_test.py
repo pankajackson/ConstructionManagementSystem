@@ -120,6 +120,31 @@ class TestAuth:
         assert js["data"]["dev_mode"] is True
         assert len(js["data"]["dev_otp"]) == 6
         assert js["data"]["dev_otp"].isdigit()
+        # Iteration 2: delivery provider name is exposed in the envelope
+        assert js["data"].get("delivery") == "console"
+
+    def test_request_otp_delivery_field_present_and_verify_works(self):
+        """The new delivery field must be present, and the dev_otp must still allow verification."""
+        email = f"delivery_test_{uuid.uuid4().hex[:8]}@demo.com"
+        r = requests.post(f"{API}/auth/request-otp", json={"email": email}, timeout=TIMEOUT)
+        assert r.status_code == 200, r.text
+        js = _envelope_ok(r.json())
+        assert js["data"].get("delivery") == "console"
+        otp = js["data"].get("dev_otp")
+        assert otp and len(otp) == 6
+        v = requests.post(f"{API}/auth/verify-otp", json={"email": email, "code": otp}, timeout=TIMEOUT)
+        assert v.status_code == 200, v.text
+        assert v.json()["data"]["access_token"]
+
+    def test_openapi_docs_loads(self):
+        r = requests.get(f"{BASE_URL}/api/v1/docs", timeout=TIMEOUT)
+        assert r.status_code == 200
+        # It's an HTML swagger UI page
+        assert "text/html" in r.headers.get("content-type", "").lower()
+        r2 = requests.get(f"{BASE_URL}/api/v1/openapi.json", timeout=TIMEOUT)
+        assert r2.status_code == 200
+        spec = r2.json()
+        assert "paths" in spec and "/api/v1/auth/request-otp" in spec["paths"]
 
     def test_verify_wrong_code_400(self):
         r = requests.post(f"{API}/auth/request-otp", json={"email": "pm@demo.com"}, timeout=TIMEOUT)
@@ -880,6 +905,18 @@ class TestUploads:
         d = r.json()["data"]
         assert d["url"].startswith("http")
         assert d["mime_type"] == "image/png"
+        # Iteration 2: provider + key now in envelope
+        assert d.get("provider") == "filesystem"
+        assert d.get("key") and d["key"].startswith(f"{admin_ctx['org_id']}/")
+        # Verify file is actually served back via the filesystem GET endpoint.
+        # NOTE: `data.url` is built from request.base_url which resolves to the
+        # internal cluster hostname behind the ingress and is not publicly
+        # fetchable (pre-existing behavior from iteration_1). We therefore
+        # verify serving through the canonical public BASE_URL + key.
+        public_url = f"{BASE_URL}/api/v1/uploads/file/{d['key']}"
+        get_r = requests.get(public_url, timeout=TIMEOUT)
+        assert get_r.status_code == 200, f"{get_r.status_code} {get_r.text[:200]}"
+        assert get_r.content[:8] == b"\x89PNG\r\n\x1a\n"
 
     def test_upload_non_image_rejected(self, admin_ctx):
         files = {"file": ("t.txt", b"hello world", "text/plain")}

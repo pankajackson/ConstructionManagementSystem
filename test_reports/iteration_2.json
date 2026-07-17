@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 2 backend regression + new-feature verification. All 49 pytest cases pass (47 from iter_1 + 2 new for iter_2 changes; plus extended assertions on request-otp and upload envelope). Verified: (a) POST /auth/request-otp now returns data.delivery='console' AND data.dev_otp usable by verify-otp; (b) POST /uploads/image response envelope now includes data.provider='filesystem' and data.key starting with {org_id}/; (c) file still fetchable via GET /uploads/file/{org}/{name} on the public BASE_URL and returns valid PNG bytes; (d) non-image MIME and fake magic-bytes still rejected (400), size limit path unchanged; (e) Kanban PATCH /projects/{pid}/tasks/{tid} still moves todo->in_progress->done for PM, and site_engineer done->in_progress is STILL rejected with 403 (test_site_engineer_cannot_revert_status); (f) /api/v1/health returns 200 confirming lifespan validate_startup_config() passed with defaults (OTP_DELIVERY_TYPE=console, STORAGE_TYPE=filesystem); (g) /api/v1/docs and /api/v1/openapi.json load and contain /api/v1/auth/request-otp path. Provider defaults unchanged as required — no code edits to app source, only added/extended tests.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/v1/uploads/image", "issue": "data.url is built from request.base_url which resolves to the internal cluster hostname (http://<host>.cluster-11.preview.emergentcf.cloud/...) and returns 403 via the edge. Files ARE reachable on the public REACT_APP_BACKEND_URL (200 image/png). Pre-existing behavior from iteration_1, not a regression, but frontends/mobile that consume data.url as-is will get 403. Recommend building the URL from FRONTEND_URL/PUBLIC_BASE_URL setting, or returning a relative path so the client can prefix with REACT_APP_BACKEND_URL."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: fix uploaded-file URL construction so data.url points at the public REACT_APP_BACKEND_URL (or return a path-only URL). Currently the returned URL uses the internal cluster hostname and 403s from outside.",
+    "OPTIONAL: consider validating STORAGE_TYPE and OTP_DELIVERY_TYPE case-sensitively OR normalize both sides — currently normalized via .lower().strip() which is fine, just documented."
+  ],
+  "critical_code_review_comments": [
+    "uploads.py — `url` built from request.base_url returns internal cluster host. This URL is echoed back to clients and stored in DB references (photos[]). Prefer FRONTEND_URL-based or relative URL, otherwise clients rendering the URL directly (mobile Expo app, browser) fail with 403. HIGH IMPACT on iteration_2 photo flow inside logs/tasks.",
+    "auth.py request-otp — good: `delivery` and `dev_mode` now always in payload, `dev_otp` only exposed when provider.exposes_dev_otp True. Consistent with playbook contract.",
+    "storage_provider.py path handling (filesystem) — get_file_url is fine, but consider adding a `PUBLIC_BASE_URL` setting to avoid depending on request context (works for background tasks or non-HTTP callers).",
+    "config.validate_startup_config() — good fail-fast on sendgrid/s3 missing credentials. Consider also validating UPLOAD_DIR is writable when STORAGE_TYPE=filesystem to catch permission issues early.",
+    "uploads.py get_file — traversal check is now BEFORE FileResponse construction (good, fixed since iter_1 review comment). But it still doesn't restrict access by X-Org-Id — any authenticated OR unauthenticated caller who knows the {org_id}/{filename} pair can fetch. If images may contain PII (site photos), consider gating GET by auth + org membership, or make keys unguessable (they already are UUID4 which is fine for now).",
+    "server.py CORS — unchanged, still `allow_origins=['*']` with credentials=False. Fine for preview but if mobile app moves to cookie-based auth, this breaks."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (extended: added test_request_otp_delivery_field_present_and_verify_works, test_openapi_docs_loads; extended test_request_otp_existing_demo_returns_dev_otp with delivery assertion; extended test_upload_image_success with provider+key+served-content assertion)"
+  ],
+  "success_rate": {"backend": "100% (49/49)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Unchanged from iteration_1 — OTP dev mode via dev_otp field. Demo users: admin@demo.com / pm@demo.com / engineer@demo.com / viewer@demo.com in 'Demo Constructions Pvt Ltd' org.",
+  "seed_data_creation": "Tests still create TEST_ prefixed projects/tasks/issues/logs and ephemeral users (rate_test_*, logout_test_*, invitee_*, crosstenant_*, delivery_test_*). No cleanup needed — safe.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All backend regressions + iter_2 feature deltas covered. Suite lives at /app/backend/tests/backend_test.py, run with `cd /app/backend && pytest tests/backend_test.py -v`. Iteration 2 only added tests, did NOT change app code. Known but non-blocking: uploaded-file URL uses cluster hostname; verify via public BASE_URL + data.key. SendGrid + S3 provider code paths exist but are NOT exercised (env still console/filesystem); flip OTP_DELIVERY_TYPE=sendgrid or STORAGE_TYPE=s3 in .env (with credentials) to exercise them in a future iteration. Kanban drag-drop UI (React) not tested — request was backend-only. Mobile Expo scaffold under /app/mobile/ not tested — request was backend-only.",
+  "rca of the issue": "N/A — no failing backend test after fixes. Two initial test failures were due to my own test assertions (openapi path expected without /api/v1 prefix; upload url pointed at internal cluster hostname). Corrected the assertions; underlying app behavior is either correct (openapi paths include the mount prefix) or a pre-existing non-blocking cosmetic issue (upload url host), documented above."
+}

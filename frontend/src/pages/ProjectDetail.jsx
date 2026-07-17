@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { clsx } from "clsx";
 import {
   Plus, Kanban, ClipboardText, Warning, ArrowLeft, Archive, Users as UsersIcon,
-  ArrowClockwise, ChatCircle, MapPin, DownloadSimple, DotsThree
+  ArrowClockwise, ChatCircle, MapPin, DownloadSimple, DotsThree, Rows, SquaresFour
 } from "@phosphor-icons/react";
 import { API, errMsg } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -12,6 +12,7 @@ import { StatusChip } from "../components/Chip";
 import { Modal, ConfirmDialog } from "../components/Modal";
 import { Empty, Loader, Skeleton } from "../components/State";
 import { Avatar } from "../components/Avatar";
+import { KanbanBoard } from "../components/KanbanBoard";
 import {
   fmtDate, fmtDateTime, fmtRelative, PROJECT_STATUS_LABEL, TASK_STATUS_LABEL,
   ISSUE_STATUS_LABEL, PRIORITY_LABEL, WEATHER_LABEL, CATEGORY_LABEL
@@ -53,23 +54,29 @@ const TasksPanel = ({ projectId, members, currentRole }) => {
   const [sortBy, setSortBy] = useState("created_at");
   const [order, setOrder] = useState("desc");
   const [showCreate, setShowCreate] = useState(false);
+  const [view, setView] = useState(() => localStorage.getItem("tasks_view") || "list");
   const navigate = useNavigate();
   const canWrite = ["admin", "project_manager", "site_engineer"].includes(currentRole);
 
+  useEffect(() => { localStorage.setItem("tasks_view", view); }, [view]);
+
   const load = useCallback(async () => {
     try {
-      const { data } = await API.get(`/projects/${projectId}/tasks`, {
-        params: {
-          status: statusFilter || undefined, priority: priorityFilter || undefined,
-          assignee_id: assigneeFilter || undefined, sort_by: sortBy, order,
-        },
-      });
+      // In Kanban view we fetch all statuses at once regardless of the status filter (except assignee/priority)
+      const params = {
+        priority: priorityFilter || undefined,
+        assignee_id: assigneeFilter || undefined,
+        sort_by: sortBy, order,
+        page_size: view === "kanban" ? 200 : 20,
+      };
+      if (view === "list") params.status = statusFilter || undefined;
+      const { data } = await API.get(`/projects/${projectId}/tasks`, { params });
       setTasks(data.data);
     } catch (e) {
       toast.error(errMsg(e));
       setTasks([]);
     }
-  }, [projectId, statusFilter, priorityFilter, assigneeFilter, sortBy, order]);
+  }, [projectId, statusFilter, priorityFilter, assigneeFilter, sortBy, order, view]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -94,11 +101,27 @@ const TasksPanel = ({ projectId, members, currentRole }) => {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 items-end justify-between">
-        <div className="flex flex-wrap gap-2">
-          <select className="input-brut" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} data-testid="task-status-filter">
-            <option value="">All statuses</option>
-            {Object.entries(TASK_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex border-2 border-ink" data-testid="tasks-view-toggle">
+            <button
+              onClick={() => setView("list")}
+              className={clsx("h-12 w-12 flex items-center justify-center border-r-2 border-ink", view === "list" ? "bg-ink text-white" : "bg-white hover:bg-muted")}
+              title="List view"
+              data-testid="view-list-btn"
+            ><Rows size={18} weight="bold" /></button>
+            <button
+              onClick={() => setView("kanban")}
+              className={clsx("h-12 w-12 flex items-center justify-center", view === "kanban" ? "bg-ink text-white" : "bg-white hover:bg-muted")}
+              title="Kanban board"
+              data-testid="view-kanban-btn"
+            ><SquaresFour size={18} weight="bold" /></button>
+          </div>
+          {view === "list" && (
+            <select className="input-brut" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} data-testid="task-status-filter">
+              <option value="">All statuses</option>
+              {Object.entries(TASK_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          )}
           <select className="input-brut" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} data-testid="task-priority-filter">
             <option value="">All priorities</option>
             {Object.entries(PRIORITY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -107,14 +130,16 @@ const TasksPanel = ({ projectId, members, currentRole }) => {
             <option value="">All assignees</option>
             {members.map((m) => <option key={m.user_id} value={m.user_id}>{m.name || m.email}</option>)}
           </select>
-          <select className="input-brut" value={`${sortBy}:${order}`} onChange={(e) => { const [s, o] = e.target.value.split(":"); setSortBy(s); setOrder(o); }} data-testid="task-sort">
-            <option value="created_at:desc">Newest first</option>
-            <option value="created_at:asc">Oldest first</option>
-            <option value="due_date:asc">Due date ↑</option>
-            <option value="due_date:desc">Due date ↓</option>
-            <option value="priority:desc">Priority ↓</option>
-            <option value="title:asc">Title A–Z</option>
-          </select>
+          {view === "list" && (
+            <select className="input-brut" value={`${sortBy}:${order}`} onChange={(e) => { const [s, o] = e.target.value.split(":"); setSortBy(s); setOrder(o); }} data-testid="task-sort">
+              <option value="created_at:desc">Newest first</option>
+              <option value="created_at:asc">Oldest first</option>
+              <option value="due_date:asc">Due date ↑</option>
+              <option value="due_date:desc">Due date ↓</option>
+              <option value="priority:desc">Priority ↓</option>
+              <option value="title:asc">Title A–Z</option>
+            </select>
+          )}
         </div>
         <div className="flex gap-2">
           <button className="btn-brut secondary" onClick={download} data-testid="task-export-csv"><DownloadSimple size={16} weight="bold"/> CSV</button>
@@ -126,6 +151,20 @@ const TasksPanel = ({ projectId, members, currentRole }) => {
 
       {tasks === null ? (
         <div className="space-y-2">{[1,2,3].map((i)=><Skeleton key={i} className="h-16"/>)}</div>
+      ) : view === "kanban" ? (
+        tasks.length === 0 ? (
+          <Empty title="No tasks yet" message="Add the first task to see it on the board." icon="◇" />
+        ) : (
+          <KanbanBoard
+            projectId={projectId}
+            tasks={tasks}
+            canWrite={canWrite}
+            onChanged={(next, opts) => {
+              if (opts?.reload) { load(); return; }
+              if (next) setTasks(next);
+            }}
+          />
+        )
       ) : tasks.length === 0 ? (
         <Empty title="No tasks" message="Create the first task for this project." icon="◇" />
       ) : (

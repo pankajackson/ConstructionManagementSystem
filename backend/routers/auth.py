@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.config import get_settings
 from core.db import get_db
 from core.deps import get_current_user
+from core.email_provider import get_email_provider
 from core.response import envelope
 from core.security import (
     create_access_token,
@@ -73,15 +74,24 @@ async def request_otp(payload: OtpRequest, request: Request):
         }
     )
 
-    # In dev, log AND return the OTP so the frontend can auto-fill / show it.
-    log.warning("[DEV OTP] email=%s code=%s (expires in %sm)", email, code, settings.OTP_EXPIRY_MINUTES)
+    # Deliver via the configured provider (console logs; sendgrid emails).
+    provider = get_email_provider()
+    try:
+        await provider.send_otp(to_email=email, code=code, expires_minutes=settings.OTP_EXPIRY_MINUTES)
+    except Exception:
+        # Do not leak provider errors to the client; log and return a friendly message.
+        log.exception("OTP delivery failed for %s via %s", email, provider.provider_name)
+        raise HTTPException(status_code=502, detail="We could not send your verification code. Please try again shortly.")
 
     payload_out = {
         "email": email,
         "expires_in": settings.OTP_EXPIRY_MINUTES * 60,
+        "delivery": provider.provider_name,
         "dev_mode": settings.DEV_MODE,
     }
-    if settings.DEV_MODE:
+    # Only expose the OTP in the response when the provider says it's safe
+    # (i.e. console provider + DEV_MODE). Real email providers never expose it.
+    if provider.exposes_dev_otp:
         payload_out["dev_otp"] = code
     return envelope(payload_out)
 
