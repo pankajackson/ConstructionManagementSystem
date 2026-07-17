@@ -1,0 +1,93 @@
+services:
+  mongo:
+    image: mongo:6
+    container_name: constructos_mongo
+    restart: unless-stopped
+    ports:
+      - "${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: constructos_backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_HOST_PORT:-8001}:8001"
+    environment:
+      # Core (required)
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "${DB_NAME:-constructos_db}"
+      JWT_SECRET: "${JWT_SECRET:-change-me-in-dot-env-file-32chars-min-please-rotate}"
+
+      # Auth timings
+      ACCESS_TOKEN_MINUTES: "${ACCESS_TOKEN_MINUTES:-480}"
+      REFRESH_TOKEN_DAYS: "${REFRESH_TOKEN_DAYS:-30}"
+      OTP_EXPIRY_MINUTES: "${OTP_EXPIRY_MINUTES:-10}"
+      OTP_MAX_ATTEMPTS: "${OTP_MAX_ATTEMPTS:-5}"
+      OTP_RATE_LIMIT_PER_HOUR: "${OTP_RATE_LIMIT_PER_HOUR:-10}"
+
+      # Dev switches
+      DEV_MODE: "${DEV_MODE:-true}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:3000}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:8001}"
+
+      # OTP delivery (console | sendgrid)
+      OTP_DELIVERY_TYPE: "${OTP_DELIVERY_TYPE:-console}"
+      SENDGRID_API_KEY: "${SENDGRID_API_KEY:-}"
+      SENDGRID_FROM_EMAIL: "${SENDGRID_FROM_EMAIL:-}"
+      SENDGRID_FROM_NAME: "${SENDGRID_FROM_NAME:-ConstructOS}"
+
+      # File storage (filesystem | s3)
+      STORAGE_TYPE: "${STORAGE_TYPE:-filesystem}"
+      UPLOAD_DIR: "/app/uploads"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_S3_BUCKET: "${AWS_S3_BUCKET:-}"
+      AWS_S3_REGION: "${AWS_S3_REGION:-ap-south-1}"
+      AWS_S3_PUBLIC_URL_BASE: "${AWS_S3_PUBLIC_URL_BASE:-}"
+      S3_PRESIGNED_TTL_SECONDS: "${S3_PRESIGNED_TTL_SECONDS:-604800}"
+    volumes:
+      - ./backend:/app:cached
+      - backend_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/v1/health').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: constructos_frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    environment:
+      REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-http://localhost:8001}"
+      WDS_SOCKET_PORT: "0"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./frontend/src:/app/src:cached
+      - ./frontend/public:/app/public:cached
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js:cached
+      - ./frontend/postcss.config.js:/app/postcss.config.js:cached
+
+volumes:
+  mongo_data:
+  backend_uploads:

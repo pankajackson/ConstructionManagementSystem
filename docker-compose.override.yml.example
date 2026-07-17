@@ -1,0 +1,25 @@
+# Optional local overrides. Copy to `docker-compose.override.yml` to customize.
+# Docker Compose automatically merges override files on top of docker-compose.yml.
+#
+# Example use cases:
+#  - Use a different Mongo image
+#  - Add a mongo-express UI
+#  - Expose backend on a different port
+#
+# Everything below is COMMENTED OUT by default.
+
+# services:
+#   mongo-express:
+#     image: mongo-express:1
+#     depends_on:
+#       - mongo
+#     ports:
+#       - "8081:8081"
+#     environment:
+#       ME_CONFIG_MONGODB_SERVER: mongo
+#       ME_CONFIG_BASICAUTH_USERNAME: admin
+#       ME_CONFIG_BASICAUTH_PASSWORD: admin
+#
+#   backend:
+#     ports:
+#       - "9001:8001"       # expose on host port 9001 instead
