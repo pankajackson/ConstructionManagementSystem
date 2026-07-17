@@ -1,0 +1,119 @@
+{
+  "theme": "light",
+  "archetype": "Swiss & High-Contrast / Technical Brutalism",
+  "design_concept": "Industrial Field Service - Built for high-glare environments, sunlight legibility, and rugged usage on construction sites. Prioritizes maximum luminance contrast, large touch targets, and distinct color-coded chips over soft aesthetics.",
+  "typography": {
+    "heading_font": "Barlow Condensed",
+    "body_font": "IBM Plex Sans",
+    "weights": {
+      "headings": "600, 700, 800",
+      "body": "400, 500, 600"
+    },
+    "guidelines": "Use 'Barlow Condensed' for all headings, tight tracking (tracking-tight) and uppercase for overlines. Use 'IBM Plex Sans' for body text to ensure optimal legibility and a technical blueprint feel. (Import via Google Fonts).",
+    "sizes": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight",
+      "h2": "text-2xl md:text-3xl font-bold",
+      "body": "text-base md:text-lg",
+      "labels": "text-sm font-semibold tracking-wider uppercase"
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#FFFFFF",
+      "muted": "#F4F4F5",
+      "dark": "#09090B"
+    },
+    "text": {
+      "primary": "#09090B",
+      "secondary": "#52525B",
+      "inverse": "#FFFFFF"
+    },
+    "border": {
+      "heavy": "#09090B",
+      "subtle": "#A1A1AA"
+    },
+    "chips": {
+      "priorities": {
+        "Low": "bg-zinc-600 text-white font-bold border-2 border-zinc-900",
+        "Medium": "bg-yellow-400 text-black font-bold border-2 border-zinc-900",
+        "High": "bg-orange-600 text-white font-bold border-2 border-zinc-900",
+        "Critical": "bg-red-600 text-white font-bold border-2 border-zinc-900"
+      },
+      "task_status": {
+        "To-Do": "bg-white text-zinc-900 font-bold border-2 border-zinc-900",
+        "In Progress": "bg-blue-600 text-white font-bold border-2 border-zinc-900",
+        "Done": "bg-green-600 text-white font-bold border-2 border-zinc-900"
+      },
+      "issue_status": {
+        "Open": "bg-red-600 text-white font-bold border-2 border-zinc-900",
+        "In Progress": "bg-orange-500 text-white font-bold border-2 border-zinc-900",
+        "Resolved": "bg-blue-600 text-white font-bold border-2 border-zinc-900",
+        "Closed": "bg-zinc-800 text-white font-bold border-2 border-zinc-900"
+      },
+      "project_status": {
+        "On Track": "bg-green-600 text-white font-bold border-2 border-zinc-900",
+        "Delayed": "bg-red-600 text-white font-bold border-2 border-zinc-900",
+        "On Hold": "bg-yellow-400 text-black font-bold border-2 border-zinc-900",
+        "Completed": "bg-zinc-900 text-white font-bold border-2 border-zinc-900"
+      },
+      "weather": {
+        "Sunny": "bg-amber-400 text-black font-bold border-2 border-zinc-900",
+        "Cloudy": "bg-slate-500 text-white font-bold border-2 border-zinc-900",
+        "Rainy": "bg-sky-600 text-white font-bold border-2 border-zinc-900",
+        "Stopped Work": "bg-red-600 text-white font-bold border-2 border-zinc-900"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "borders": "Heavy 2px black borders (border-2 border-zinc-900) on cards, inputs, and buttons are MANDATORY for sunlight legibility.",
+    "shadows": "Hard offset shadows for interactivity (e.g., shadow-[4px_4px_0px_0px_rgba(9,9,11,1)]). NO soft blur shadows. Solid technical look.",
+    "radius": "Minimal. Use rounded-none or rounded-sm maximum to maintain a rugged, industrial aesthetic."
+  },
+  "spacing_and_layout": {
+    "touch_targets": "Minimum 48px height (h-12) for ALL clickable elements (buttons, inputs, tabs, dropdowns) to support field usage with dirty hands/gloves.",
+    "containers": "Generous padding p-4 to p-6. Elements must not feel cramped. Large text, clear hierarchy.",
+    "grids": "Use technical grid borders (border-collapse style) for data-heavy sections like daily logs and task lists.",
+    "mobile_navigation": "Bottom navigation bar is strictly required for mobile screens for thumb accessibility."
+  },
+  "component_instructions": {
+    "buttons": "Thick 2px borders, solid backgrounds (Black or Safety Yellow), hard offset shadows. Text must be bold, uppercase. Active state should compress the shadow (translate-y-1 translate-x-1 shadow-none).",
+    "cards": "White background, 2px solid black border. Content must have high contrast. Use subgrid layouts for metrics.",
+    "inputs": "Large hit area (h-12). 2px solid border. Focus state must use a thick high-contrast outline (e.g., ring-offset-2 ring-2 ring-zinc-900).",
+    "data_display": "Dates MUST be formatted strictly as DD/MM/YYYY IST. Use large, legible numbers for labor count and metrics.",
+    "photo_grid": "For Daily Logs, display photos in a tight 2-column or 3-column grid with 2px borders around each image. Max 10 photos.",
+    "avatars": "Square avatars with sharp borders instead of circles to match the industrial theme."
+  },
+  "accessibility": {
+    "contrast": "Maintain 7:1 contrast ratio for critical text (Sunlight visibility protocol).",
+    "touch": "Fat-finger touch targets required (min h-12 or 48x48px).",
+    "motion": "Minimal motion. Use instant state changes or very fast transitions (duration-75) to feel responsive and reliable on low-end devices."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Always use weight='bold' or weight='fill' for distinct visibility outdoors."
+  },
+  "images": {
+    "placeholders": [
+      {
+        "url": "https://images.pexels.com/photos/8961260/pexels-photo-8961260.jpeg",
+        "description": "Two workers discussing plans on a sandy construction site. Use for login hero or project covers."
+      },
+      {
+        "url": "https://images.pexels.com/photos/2455119/pexels-photo-2455119.jpeg",
+        "description": "Textured grey concrete wall. Use for subtle background textures or empty states."
+      }
+    ],
+    "usage": "Use for login screen backgrounds, project covers, or avatar fallbacks. Never use generic placeholder URLs."
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You MUST use JavaScript (.js/.jsx), NOT TypeScript (.tsx). All components must be .jsx or .js",
+    "Include <link href='https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap' rel='stylesheet'> in index.html",
+    "DO NOT USE complete transparent backgrounds in headers, overlays, or any surface over content.",
+    "Avoid centered layouts for forms or lists; always left-align for quick reading.",
+    "Implement high-contrast state changes for hover/active/focus (e.g., invert colors on click).",
+    "Add data-testid attributes to all interactive elements for robust testing.",
+    "Do not use generic 'AI slop' gradients or soft shadows. Stick to the hard, brutalist, industrial look with flat colors and thick borders.",
+    "All modals and dialogs must have heavy borders and solid backdrop (bg-zinc-900/80) rather than a light blur, to block out background noise completely.",
+    "Use solid Phosphor icons (weight='bold' or 'fill'). Use 'sonner' for toast notifications."
+  ]
+}
