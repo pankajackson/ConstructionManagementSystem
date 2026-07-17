@@ -47,8 +47,10 @@ class FilesystemProvider(StorageProvider):
             await f.write(data)
 
     async def get_file_url(self, key: str, *, request_base_url: str | None = None) -> str:
-        # request_base_url e.g. "https://host.example.com"
-        base = (request_base_url or "").rstrip("/")
+        # Prefer explicit PUBLIC_BASE_URL (safe for pods behind ingress); fall back
+        # to the request's base URL for local dev.
+        settings = get_settings()
+        base = (settings.PUBLIC_BASE_URL or request_base_url or "").rstrip("/")
         return f"{base}/api/v1/uploads/file/{key}"
 
 

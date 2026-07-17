@@ -1,73 +1,89 @@
 # ConstructOS — Product Requirements Document
 
 ## Problem Statement
-Build a **multi-organization Construction Management Platform** for Indian construction and building companies to replace spreadsheets, WhatsApp, and manual paperwork for day-to-day site operations: task tracking, daily site logs, issue tracking, and team coordination across multiple simultaneous projects. Reference UX: the "Onsite" Android app.
+Multi-organization Construction Management Platform for Indian construction/building companies to replace spreadsheets and WhatsApp for site operations — tasks, daily logs, issues, and team coordination across multiple simultaneous projects. Reference UX: Onsite (Android app).
 
-## Architecture (as delivered in this iteration)
+## Architecture (as delivered)
 
-Because the Emergent preview environment cannot run PostgreSQL/Next.js/React-Native concurrently, we shipped the MVP on the fully-supported preview stack while preserving the 3-layer separation described in the brief. This is Option (a) that the user approved.
+Three cleanly separated layers so any one can be maintained independently:
 
-| Layer | Tech |
-|---|---|
-| Database | **MongoDB** via Motor (async). Every entity carries `organization_id`, soft-delete `deleted_at`, audit fields `created_at / updated_at / created_by`. Compound and partial unique indexes enforce relational-style constraints (e.g., one submitted daily-log per project/user/date). |
-| Backend  | **FastAPI** (Python) under `/api/v1/*`. Consistent envelope `{ success, data, error, meta }`. Auto OpenAPI at `/api/v1/docs`. RBAC enforced in the service layer via FastAPI dependencies (`require_roles`), NOT in the frontend. Rate-limited OTP endpoints. |
-| Frontend | **React (CRA) + Tailwind CSS**, brutalist industrial theme (Barlow Condensed + IBM Plex Sans/Mono), safety-yellow accent, sunlight-legible chips. |
-| Mobile   | Deferred (per user selection: Option a). React Native/Expo scaffold to be added later. |
-| Auth     | Email + OTP, no passwords. 6-digit code, 10-min expiry, single-use, rate-limited (10/hr per email, 5 wrong attempts). JWT access token (8h default) + refresh token (30d) in `refresh_tokens` collection with revocation on logout. In dev mode OTP is returned in the response and logged. |
+| Layer    | Tech |
+|----------|------|
+| Database | **MongoDB** via Motor (async). Every entity carries `organization_id`, soft-delete `deleted_at`, audit fields. Compound + partial unique indexes enforce relational-style constraints. |
+| Backend  | **FastAPI** under `/api/v1/*`. `{ success, data, error, meta }` envelope. Auto OpenAPI at `/api/v1/docs`. RBAC enforced in the service layer via `require_roles(...)`. Multi-tenancy via `X-Org-Id` header. Rate-limited OTP endpoints. |
+| Web      | **React (CRA) + Tailwind** — brutalist industrial theme (Barlow Condensed + IBM Plex), safety-yellow accents, sunlight-legible chips. Includes drag-and-drop **Kanban** view for tasks. |
+| Mobile   | **Expo / React Native** under `/app/mobile/` — thin client over the same API. Camera + gallery, offline drafts for daily logs, deep-link ready via `constructos://` scheme. Builds via EAS. |
 
-## Personas
-- **Admin** — full access, invites members, deactivates users, manages org settings.
-- **Project Manager** — creates/edits projects, tasks, issues, logs; can close issues.
-- **Site Engineer** — creates daily logs, tasks, issues; updates task status forward only.
-- **Viewer** — read-only across the org.
+## Pluggable providers (config-only swap)
 
-## Core Requirements (static)
-- Multi-tenant from day one; a user account can belong to multiple orgs via `memberships`; UI scopes to one org at a time via `X-Org-Id` header.
-- All list endpoints paginated. All timestamps ISO 8601 UTC; UI renders DD/MM/YYYY IST.
-- Every create/update/status-change writes an entry to `activity_log`.
-- Uploads: only JPEG/PNG/WebP; ≤10 MB; magic-byte validated.
+Both providers are selected via env vars; switching is a config change, not a code change.
 
-## What's been implemented (2026-01-17)
-- **Auth** — request-OTP, verify-OTP, refresh, /me, logout with server-side token revocation.
-- **Organizations** — create, list-my-orgs, get-current, update, list-members, invite (auto-provisions user), update role / activate-deactivate with last-admin protection.
-- **Projects** — CRUD, archive/unarchive, per-project stats, activity feed, search + status filter, pagination.
-- **Tasks** — CRUD, filter/sort/paginate, status history, append-only comments, image attachments, CSV export, overdue flag, forward-only status for engineers.
-- **Daily Logs** — draft & submitted, unique-per-user-per-project-per-date (submitted), admin unlock within 24h grants 2h edit window, engineer sees only own logs, weather/date range filters, photo lightbox in detail view.
-- **Issues** — CRUD, mandatory resolution note on resolve, admin/PM-only close, mandatory reopen reason, filters by status/priority/category/assignee/date, CSV export.
-- **Notifications** — in-app: task/issue assigned, task status changed (notifies creator), daily log submitted (notifies admins+PMs of the org). Unread badge, mark-one/all-read.
-- **Uploads** — local backend storage `/api/v1/uploads/image` + `/api/v1/uploads/file/{org}/{name}`.
-- **Frontend UI** — Login (OTP + 4 one-click demo signins), Org setup, Org switcher, Projects grid, Project detail (Overview/Tasks/Logs/Issues tabs), Task detail with comments+history, Log detail with lightbox, Issue detail with status transitions, Team management (Admin), Notifications inbox.
-- **Backend tests** — 47/47 passing (auth, RBAC, multi-tenancy isolation, all modules, uploads, CSV).
+### OTP delivery (`OTP_DELIVERY_TYPE`)
+- **`console`** *(default)* — logs the OTP to backend stdout. When `DEV_MODE=true`, the OTP is also echoed in the `POST /auth/request-otp` response for testing. **Never** exposed with `sendgrid`.
+- **`sendgrid`** — sends a real HTML+plaintext email via SendGrid. Requires `SENDGRID_API_KEY` + `SENDGRID_FROM_EMAIL` (verified sender) + optional `SENDGRID_FROM_NAME`. Startup fails fast with a clear error if any of these is missing.
 
-## Seed Data
-On backend startup (lifespan), if the demo org is missing, we seed:
-- Org "Demo Constructions Pvt Ltd" with 4 members (admin, PM, engineer, viewer).
-- 2 projects (Skyline Residences — Tower B, Green Fields Warehousing).
-- 5 tasks and 2 issues spanning both projects.
+### File storage (`STORAGE_TYPE`)
+- **`filesystem`** *(default)* — writes to `UPLOAD_DIR`, served via backend route. URLs are built from `PUBLIC_BASE_URL` (falls back to request base) so they render on mobile/external clients.
+- **`s3`** — uploads to a **private** S3 bucket, returns **pre-signed** GET URLs (default TTL 7 days, configurable via `S3_PRESIGNED_TTL_SECONDS`). If `AWS_S3_PUBLIC_URL_BASE` is set (CloudFront), that CDN URL is returned instead. Startup fails fast if `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_S3_BUCKET` / `AWS_S3_REGION` are missing.
 
-Credentials: see `/app/memory/test_credentials.md`.
+Both provider interfaces live in `/app/backend/core/email_provider.py` and `/app/backend/core/storage_provider.py`. Adding a Resend / R2 / GCS provider means adding a new class implementing the same interface and adding a switch case — no other code changes.
 
-## Prioritized backlog (P0 / P1 / P2)
+## Personas & roles (unchanged)
+Admin · Project Manager · Site Engineer · Viewer — all enforced server-side.
 
-### P0 (should ship next)
-1. **Email delivery for OTP** — currently dev-only (OTP returned in response); wire SendGrid or Resend once a key is provided.
-2. **Cloud object storage (S3 / R2 / Cloudinary)** — replace local backend storage for uploads.
-3. **Full-text search** on tasks & issues.
+## What's implemented (as of 2026-01-17, iterations 1 & 2)
+
+### Backend
+- Email + OTP auth (JWT + refresh + logout revocation)
+- RBAC (4 roles) enforced in service layer + last-admin protection
+- Organizations + members + invites (auto-provisions user on invite)
+- Projects (CRUD, archive, stats, activity feed)
+- Tasks (CRUD, status history, comments, filters/sort/pagination, CSV export, overdue detection)
+- Daily Logs (draft + submitted, partial-unique index prevents duplicate submissions per date/user/project, admin unlock within 24h)
+- Issues (CRUD, mandatory resolution note on resolve, admin/PM close, mandatory reopen reason, CSV export)
+- Notifications (task/issue assignment, status changes, daily-log submissions, mark-read, unread-count)
+- **Pluggable Email provider** (console / sendgrid) with startup validation
+- **Pluggable Storage provider** (filesystem / s3 with pre-signed URLs)
+- 49/49 backend tests passing (regression + new feature deltas)
+
+### Web (React)
+- Login (OTP + one-click demo signins for all 4 roles)
+- Org setup / switcher
+- Projects grid + search + status filter
+- Project detail with Overview / Tasks / Logs / Issues tabs
+- **Tasks: List view + drag-and-drop Kanban view** (To-Do / In Progress / Done). Server-side RBAC still applies to drag actions.
+- Task, Log, Issue detail pages with full history / comments / photo lightbox / status transitions
+- Team management (Admin can invite + activate/deactivate)
+- Notifications inbox
+
+### Mobile (Expo / React Native)
+- Login screen (OTP + demo signins, matching web design system)
+- Bottom-tab layout: Projects / Notifications / Profile
+- Projects list, Project detail (Tasks / Logs / Issues)
+- New Daily Log form with camera + gallery + offline-draft fallback
+- Raise Issue form with camera
+- Same `constructos://` deep-link scheme registered for push handling later
+- Not yet: push notifications (dependencies wired, endpoint pending)
+
+## Prioritized backlog
+
+### P0 (needs credentials from you, code is ready)
+1. **Flip `OTP_DELIVERY_TYPE=sendgrid`** — add SendGrid API key + verified sender to `backend/.env`. Restart backend.
+2. **Flip `STORAGE_TYPE=s3`** — add AWS keys + bucket + region to `backend/.env`. Restart backend. No code changes.
+3. **Run `eas init`** in `/app/mobile/` to bind the Expo project to your Expo/EAS account, paste the printed `projectId` into `app.json`.
 
 ### P1
-1. **React Native / Expo mobile app** — camera integration, offline drafts, deep links to task/issue.
-2. **Push notifications** (FCM Android, APNs iOS) + Email notifications.
-3. **PostgreSQL migration** with Alembic — if scale requires it.
-4. **Advanced RBAC** — project-scoped roles vs org-scoped roles; a custom-role UI.
-5. **Task Kanban board** view (drag & drop columns).
-6. **Log unlock audit trail** displayed in project activity.
-7. **Bulk CSV import** for projects/tasks.
+1. Push notifications — token registration endpoint + FCM/APNs via `expo-notifications`
+2. Search bar on tasks/issues
+3. Post-Kanban polish: swimlanes by assignee, WIP limits, keyboard drag
+4. Task detail page in mobile app (currently list only)
+5. Log unlock audit trail displayed in activity feed
+6. Bulk CSV import for tasks/logs
 
-### P2 (roadmap — explicitly out-of-scope for MVP)
-Document management, workforce attendance / geo-fence, material & inventory, financials, subcontractor portal, custom analytics, Gantt/scheduling, multi-org switching UI (data model supports it).
+### P2 (roadmap — out of scope for MVP)
+Document management, workforce attendance/geo-fence, materials & inventory, financials, subcontractor portal, custom analytics, Gantt, custom roles UI, multi-org UI switcher (data model already supports it).
 
 ## Next tasks list
-1. Ask user for email provider (SendGrid/Resend) API key → wire email OTP.
-2. Ask user for image storage preference (S3/R2/Cloudinary) → migrate uploads.
-3. Scaffold React Native (Expo) app pointing at same API.
-4. Add search bar to task and issue lists.
+1. Paste SendGrid + AWS keys into `backend/.env` → sendgrid + s3 code paths activate automatically.
+2. Run `eas init` in `/app/mobile/` and start test builds.
+3. Prioritize any P1 item — I'd suggest **push notifications** next; the mobile shell is already deep-link ready.
