@@ -39,8 +39,8 @@ mobile/.expo/
 mobile/android/
 mobile/ios/
 
-# Uploads (user-generated content — never commit)
-backend/uploads/
+# Uploads (user-generated content — never commit files inside, keep dir via .gitkeep)
+backend/uploads/*
 !backend/uploads/.gitkeep
 
 # Editor + OS
@@ -57,3 +57,12 @@ yarn-debug.log*
 yarn-error.log*
 .env.*
 *.env
+
+# IMPORTANT — keep these negations at the VERY END of the file.
+# .gitignore is last-match-wins, and platform tooling may append new
+# catch-all rules above; these lines guarantee sample envs stay tracked.
+!.env.example
+!**/.env.example
+!.env.sample
+!**/.env.sample
+!backend/uploads/.gitkeep
