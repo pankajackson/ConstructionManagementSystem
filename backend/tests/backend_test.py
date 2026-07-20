@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://88fefd92-070f-4728-a067-c82371467188.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://android-adb-debug.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api/v1"
 
 DEMO_EMAILS = {

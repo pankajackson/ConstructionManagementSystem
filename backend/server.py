@@ -315,8 +315,3 @@ app.include_router(uploads_router.router, prefix=API_V1)
 @app.get("/")
 async def root():
     return envelope({"name": "ConstructOS API", "docs": "/api/v1/docs"})
-
-
-@app.get("/")
-async def root():
-    return envelope({"name": "ConstructOS API", "docs": "/api/v1/docs"})
