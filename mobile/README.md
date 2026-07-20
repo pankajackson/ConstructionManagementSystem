@@ -28,40 +28,52 @@ src/
   context/AuthContext.jsx
   components/Chip.jsx    Native chip mirroring the web design system
   theme.js               Shared color palette + labels
+assets/                  App icon / splash / adaptive-icon / favicon
 ```
+
+## Requirements
+
+- **Node 20+** and **npm 10+**
+- **Expo Go** app on your phone (from the App Store / Play Store) — **SDK 54**
+- No Android Studio or Xcode needed for day-to-day development — we run inside Expo Go
 
 ## Local development
 
-1. **Install Node 20+** and **Yarn** (or npm).
-2. **Install Expo CLI + EAS CLI** globally:
-   ```bash
-   npm i -g expo-cli eas-cli
-   ```
-3. **Install deps:**
+1. **Install deps** (npm — no yarn required):
    ```bash
    cd /app/mobile
-   yarn install
+   npm install
    ```
-4. **Point the app at your backend:**
-   Edit `/app/mobile/.env`:
+2. **Point the app at your backend** — create `.env`:
    ```
    EXPO_PUBLIC_API_URL=https://<your-backend-host>
    ```
-   For local backend, use your machine's LAN IP so the phone can reach it
-   (e.g. `http://192.168.1.100:8001`) — `localhost` won't work from a device.
-5. **Run in development:**
+   For a **local** backend, use your machine's LAN IP so the phone can reach it
+   (e.g. `http://192.168.1.100:8001`). `localhost` will not work from a device.
+3. **Start the dev server:**
    ```bash
-   yarn start
-   # scan the QR code with Expo Go on your phone
-   # OR
-   yarn ios       # requires macOS + Xcode simulator
-   yarn android   # requires Android Studio + emulator
+   npm start
    ```
+   Then scan the QR code with **Expo Go** on your phone.
+
+   Convenience shortcuts (all use Expo Go — no native toolchain required):
+   ```bash
+   npm run android   # opens the dev server and launches on an Android device/emulator via Expo Go
+   npm run ios       # same for iOS simulator (macOS) or physical device via Expo Go
+   npm run web       # opens the app in a browser
+   ```
+
+   > If you plan to run on an Android **emulator**, launch it first from Android Studio
+   > (or with `emulator -avd <name>`). If you plan to run on an iOS **simulator**,
+   > Xcode is required and only works on macOS. For a real device, just Expo Go is enough.
 
 ## Building installable binaries with EAS
 
-1. **Log in** (creates an Expo account if you don't have one):
+Native builds are done in the cloud with EAS — you do **not** need Android Studio or Xcode.
+
+1. **Install EAS CLI** and **log in** (creates an Expo account if you don't have one):
    ```bash
+   npm i -g eas-cli
    eas login
    ```
 2. **Link this app to an EAS project:**
@@ -71,17 +83,17 @@ src/
    Copy the printed `projectId` into `app.json → expo.extra.eas.projectId`.
 3. **Preview APK** (install directly on Android device):
    ```bash
-   yarn build:preview
+   npm run build:preview
    ```
 4. **Production Android AAB** (for Play Store):
    ```bash
-   yarn build:android
+   npm run build:android
    ```
 5. **iOS build** (requires an Apple Developer account — $99/yr):
    ```bash
-   yarn build:ios
+   npm run build:ios
    ```
-   EAS will handle provisioning profiles + signing.
+   EAS handles provisioning profiles + signing.
 
 ## Push notifications (optional, next iteration)
 
@@ -119,9 +131,26 @@ Same as the web app — pre-seeded users in the "Demo Constructions Pvt Ltd" org
 
 The login screen has one-tap demo buttons for each role.
 
+## Assets
+
+Simple placeholder icons live in `assets/` (`icon.png`, `adaptive-icon.png`,
+`splash.png`, `favicon.png`). Replace them with your production artwork
+before store submission.
+
 ## Known limitations (v1)
 
 - Offline: only **daily-log drafts** are stored offline. Tasks/issues require network.
 - Push notifications: dependencies wired, but the token-registration endpoint and
   server-side push send are not yet implemented (see roadmap above).
-- No native Splash/Icon assets shipped — replace `assets/*.png` before store submission.
+
+## Troubleshooting
+
+- **"Project is incompatible with this version of Expo Go"** — your Expo Go is on a
+  newer SDK than the project. Update the project with `npx expo install expo@latest --fix`
+  (this project targets **SDK 54**).
+- **`spawn adb ENOENT`** — you ran `expo run:android`, which needs a full Android SDK.
+  Use `npm run android` instead (it uses Expo Go, no local SDK required).
+- **`iOS apps can only be built on macOS devices`** — `expo run:ios` requires macOS + Xcode.
+  Use `npm run ios` (Expo Go) or `npm run build:ios` (EAS cloud build).
+- **`Unable to resolve asset "./assets/icon.png"`** — make sure the `assets/` folder
+  is present with the four placeholder PNGs (bundled in this repo).

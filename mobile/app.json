@@ -12,7 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#09090b"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.constructos.mobile",
@@ -25,7 +27,11 @@
       },
       "package": "com.constructos.mobile",
       "versionCode": 1,
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -35,15 +41,22 @@
       "expo-router",
       [
         "expo-camera",
-        { "cameraPermission": "ConstructOS uses your camera to capture site photos for daily logs, tasks, and issues." }
+        {
+          "cameraPermission": "ConstructOS uses your camera to capture site photos for daily logs, tasks, and issues."
+        }
       ],
       [
         "expo-image-picker",
-        { "photosPermission": "ConstructOS uses your photo library to attach existing images." }
-      ]
+        {
+          "photosPermission": "ConstructOS uses your photo library to attach existing images."
+        }
+      ],
+      "expo-font"
     ],
     "extra": {
-      "eas": { "projectId": "REPLACE_WITH_EAS_PROJECT_ID_AFTER_eas_init" }
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID_AFTER_eas_init"
+      }
     }
   }
 }

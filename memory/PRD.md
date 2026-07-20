@@ -87,3 +87,11 @@ Document management, workforce attendance/geo-fence, materials & inventory, fina
 1. Paste SendGrid + AWS keys into `backend/.env` → sendgrid + s3 code paths activate automatically.
 2. Run `eas init` in `/app/mobile/` and start test builds.
 3. Prioritize any P1 item — I'd suggest **push notifications** next; the mobile shell is already deep-link ready.
+
+## Iteration 3 — Mobile app upgrade (2026-01-20)
+- Upgraded mobile app from **Expo SDK 51 → SDK 54** (React Native 0.81.5, React 19.1.0, expo-router v6, reanimated v4 with react-native-worklets).
+- Fixed missing peer deps (`expo-font`, `expo-constants`, `react-native-worklets`) and pinned all SDK-54-compatible versions. `npx expo-doctor` now reports **18/18 checks passing**.
+- Generated placeholder assets (`icon.png`, `adaptive-icon.png`, `splash.png`, `favicon.png`) under `mobile/assets/` — replaces the broken `./assets/icon.png` reference.
+- Switched from `yarn` to **npm** per user preference: removed yarn.lock, added `.npmrc` with `legacy-peer-deps=true` (needed for SDK 54's react/react-dom peer graph), regenerated `package-lock.json`, and rewrote the README to use npm.
+- Changed `npm run android` / `npm run ios` scripts from `expo run:*` (which requires a local Android SDK / Xcode) to `expo start --android` / `expo start --ios` so they work with **Expo Go** and don't fail on machines without native toolchains. `npm run build:android|ios|preview` still use EAS cloud builds.
+- Removed the stale `react-native-reanimated/plugin` entry from `babel.config.js` — under RN reanimated 4, `babel-preset-expo` wires the correct `react-native-worklets/plugin` automatically.
