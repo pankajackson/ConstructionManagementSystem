@@ -95,3 +95,32 @@ Document management, workforce attendance/geo-fence, materials & inventory, fina
 - Switched from `yarn` to **npm** per user preference: removed yarn.lock, added `.npmrc` with `legacy-peer-deps=true` (needed for SDK 54's react/react-dom peer graph), regenerated `package-lock.json`, and rewrote the README to use npm.
 - Changed `npm run android` / `npm run ios` scripts from `expo run:*` (which requires a local Android SDK / Xcode) to `expo start --android` / `expo start --ios` so they work with **Expo Go** and don't fail on machines without native toolchains. `npm run build:android|ios|preview` still use EAS cloud builds.
 - Removed the stale `react-native-reanimated/plugin` entry from `babel.config.js` — under RN reanimated 4, `babel-preset-expo` wires the correct `react-native-worklets/plugin` automatically.
+
+
+## Iteration 4 — Per-project visibility, per-project roles & member profiles (2026-01-24)
+
+### What shipped
+- **Project visibility now enforced per-user.** Users see only projects they are assigned to; org admins see all. Non-members hit **403** on any `/projects/{id}/...` write route.
+- **Per-project role assignments.** New `project_members` collection: `{project_id, user_id, roles[]}`. One user can hold multiple roles per project (e.g. `site_engineer` + `viewer`) so an admin can grant fine-grained access to different sections.
+- **New "Members" tab on Project detail** — assign / edit-roles / remove flow with a multi-select role picker (chips). PM row is protected from removal; changing PM is done via Edit Project.
+- **Enhanced `/organizations/current/members` list** — adds `projects_count`, `open_tasks_count`, `last_login_at`. Team page columns updated + search / role-filter / sort-by dropdown; rows are clickable.
+- **New `/team/:userId` — Member Detail page** — profile hero, 5 KPI cards (Projects, Open tasks, Done, Total, Open issues), "Projects Assigned" list with per-project role badges + PM chip, "Recent Activity" feed.
+- **`my_roles` on every project card** so users see at a glance what role they have in each project.
+- **Backfill migration** at startup ensures every project's PM is a recorded `project_members` row (`project_manager` role) — idempotent, no data change if already present.
+
+### Backend endpoints added
+- `GET   /api/v1/projects/{id}/members`
+- `POST  /api/v1/projects/{id}/members`         `{ user_id, roles[] }`
+- `PATCH /api/v1/projects/{id}/members/{user}`  `{ roles[] }`
+- `DELETE /api/v1/projects/{id}/members/{user}`  (PM protected → 400)
+- `GET   /api/v1/organizations/current/members/{user_id}`
+
+### RBAC change
+- Project-scoped routes now depend on `require_project_roles(...)` / `project_ctx` instead of `require_roles(...)`. Effective role = highest of the user's project_member roles (org admin → always `admin`).
+
+### Verified
+70/70 backend pytest cases pass (49 existing + 21 new for iteration 4). Playwright verified: viewer sees only Skyline card with 'VIEWER' badge; Team list + Member Detail render correctly; Admin Members tab shows Assign / Edit / Remove flow with multi-role picker.
+
+### Follow-ups (optional)
+- Consider auto-creating an explicit `project_members` row for the PM on PM-change (removes the "implicit PM" edge case entirely).
+- Add "recently active" leader-board / stale-user report on Team page.

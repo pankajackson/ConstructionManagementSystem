@@ -799,6 +799,11 @@ const MembersPanel = ({ projectId, members, orgMembers, canManage, onChanged }) 
                     )}
                   </>
                 )}
+                {canManage && !m.id && (
+                  <span className="text-[10px] uppercase tracking-widest text-zinc-500 self-center" title="Change the PM from Edit Project to reassign">
+                    PM · Implicit
+                  </span>
+                )}
               </div>
             </div>
           ))
