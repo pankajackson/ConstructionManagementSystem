@@ -140,6 +140,30 @@ async def seed_demo_data() -> None:
         ]
     )
 
+    # Seed project members (per-project role assignments)
+    project_member_seed = [
+        # p1: PM + Site Engineer + Viewer (Owner Sethi)
+        (p1_id, user_ids["pm@demo.com"], ["project_manager"]),
+        (p1_id, user_ids["engineer@demo.com"], ["site_engineer"]),
+        (p1_id, user_ids["viewer@demo.com"], ["viewer"]),
+        # p2: PM + Site Engineer only (viewer explicitly NOT assigned to show filtering)
+        (p2_id, user_ids["pm@demo.com"], ["project_manager"]),
+        (p2_id, user_ids["engineer@demo.com"], ["site_engineer"]),
+    ]
+    for pid, uid, roles in project_member_seed:
+        await db.project_members.insert_one(
+            {
+                "id": new_id(),
+                "organization_id": org_id,
+                "project_id": pid,
+                "user_id": uid,
+                "roles": roles,
+                "added_by": user_ids["admin@demo.com"],
+                "added_at": now_utc(),
+                "updated_at": now_utc(),
+            }
+        )
+
     # Seed a few tasks
     task_seed = [
         (p1_id, "Slab reinforcement — 20th floor", "site_engineer", "high", "in_progress"),
@@ -238,11 +262,78 @@ async def seed_demo_data() -> None:
     log.info("Seeded demo organization + 4 users + 2 projects + tasks + issues.")
 
 
+async def migrate_project_members() -> None:
+    """Idempotent migration: ensure every project's PM is recorded in project_members with project_manager role.
+
+    Also backfills demo project_members entries for the seeded demo org (site engineer + viewer)
+    for backward compatibility with older seeds.
+    """
+    db = get_db()
+    projects_cursor = db.projects.find({"deleted_at": None})
+    async for p in projects_cursor:
+        pm_id = p.get("project_manager_id")
+        if not pm_id:
+            continue
+        existing = await db.project_members.find_one({"project_id": p["id"], "user_id": pm_id})
+        if existing:
+            roles = existing.get("roles", [])
+            if "project_manager" not in roles:
+                roles = list(dict.fromkeys([*roles, "project_manager"]))
+                await db.project_members.update_one(
+                    {"id": existing["id"]},
+                    {"$set": {"roles": roles, "updated_at": now_utc()}},
+                )
+            continue
+        await db.project_members.insert_one(
+            {
+                "id": new_id(),
+                "organization_id": p["organization_id"],
+                "project_id": p["id"],
+                "user_id": pm_id,
+                "roles": ["project_manager"],
+                "added_by": p.get("created_by"),
+                "added_at": now_utc(),
+                "updated_at": now_utc(),
+            }
+        )
+
+    # Backfill demo assignments if demo org exists but has fewer than expected project_members
+    demo_org = await db.organizations.find_one({"name": "Demo Constructions Pvt Ltd"})
+    if not demo_org:
+        return
+    engineer = await db.users.find_one({"email": "engineer@demo.com"})
+    viewer = await db.users.find_one({"email": "viewer@demo.com"})
+    if not engineer or not viewer:
+        return
+    demo_projects = await db.projects.find({"organization_id": demo_org["id"], "deleted_at": None}).to_list(length=50)
+    for p in demo_projects:
+        for uid, roles in [(engineer["id"], ["site_engineer"]), (viewer["id"], ["viewer"])]:
+            # only seed viewer on the first (Skyline) project — matches new seed intent
+            if uid == viewer["id"] and "Skyline" not in p.get("name", ""):
+                continue
+            existing = await db.project_members.find_one({"project_id": p["id"], "user_id": uid})
+            if existing:
+                continue
+            await db.project_members.insert_one(
+                {
+                    "id": new_id(),
+                    "organization_id": demo_org["id"],
+                    "project_id": p["id"],
+                    "user_id": uid,
+                    "roles": roles,
+                    "added_by": None,
+                    "added_at": now_utc(),
+                    "updated_at": now_utc(),
+                }
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()  # noqa
     await ensure_indexes()
     await seed_demo_data()
+    await migrate_project_members()
     yield
 
 

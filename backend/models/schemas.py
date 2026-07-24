@@ -57,6 +57,26 @@ class MembershipUpdate(BaseModel):
     is_active: bool | None = None
 
 
+# ============= Project Members =============
+class ProjectMemberAssign(BaseModel):
+    user_id: str
+    roles: list[Role] = Field(min_length=1)
+
+    @field_validator("roles")
+    @classmethod
+    def dedupe(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(v))
+
+
+class ProjectMemberUpdate(BaseModel):
+    roles: list[Role] = Field(min_length=1)
+
+    @field_validator("roles")
+    @classmethod
+    def dedupe(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(v))
+
+
 # ============= Project =============
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=150)

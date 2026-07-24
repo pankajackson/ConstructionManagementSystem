@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://android-adb-debug.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://project-assignment-1.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api/v1"
 
 DEMO_EMAILS = {
@@ -64,11 +64,11 @@ def _headers(token: str, org_id: str | None = None) -> dict:
 
 
 @pytest.fixture(scope="session")
-def sessions():
-    """Login once for each demo user."""
+def sessions(demo_sessions):
+    """Login once for each demo user (shared via conftest to avoid OTP rate limits)."""
     out = {}
-    for k, email in DEMO_EMAILS.items():
-        data = _login(email)
+    for k in DEMO_EMAILS:
+        data = demo_sessions[k]
         out[k] = {
             "token": data["access_token"],
             "refresh": data["refresh_token"],
@@ -405,7 +405,7 @@ class TestTasks:
     @pytest.fixture(scope="class")
     def project_id(self, admin_ctx):
         r = requests.get(
-            f"{API}/projects",
+            f"{API}/projects?q=Skyline",
             headers=_headers(admin_ctx["token"], admin_ctx["org_id"]),
             timeout=TIMEOUT,
         )
@@ -565,7 +565,7 @@ class TestDailyLogs:
     @pytest.fixture(scope="class")
     def project_id(self, admin_ctx):
         r = requests.get(
-            f"{API}/projects",
+            f"{API}/projects?q=Skyline",
             headers=_headers(admin_ctx["token"], admin_ctx["org_id"]),
             timeout=TIMEOUT,
         )
@@ -723,7 +723,7 @@ class TestIssues:
     @pytest.fixture(scope="class")
     def project_id(self, admin_ctx):
         r = requests.get(
-            f"{API}/projects",
+            f"{API}/projects?q=Skyline",
             headers=_headers(admin_ctx["token"], admin_ctx["org_id"]),
             timeout=TIMEOUT,
         )

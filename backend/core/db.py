@@ -43,6 +43,11 @@ async def ensure_indexes() -> None:
     await db.memberships.create_index([("user_id", 1), ("organization_id", 1)], unique=True)
     await db.memberships.create_index("organization_id")
 
+    # Project members (per-project role assignments)
+    await db.project_members.create_index([("project_id", 1), ("user_id", 1)], unique=True)
+    await db.project_members.create_index([("organization_id", 1), ("user_id", 1)])
+    await db.project_members.create_index("project_id")
+
     # Organizations
     await db.organizations.create_index("created_by")
     await db.organizations.create_index("created_at")

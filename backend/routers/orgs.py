@@ -82,10 +82,43 @@ async def update_current_org(payload: OrgUpdate, ctx: dict = Depends(require_rol
 @router.get("/current/members")
 async def list_members(ctx: dict = Depends(get_current_membership)):
     db = get_db()
-    memberships = await db.memberships.find({"organization_id": ctx["organization"]["id"]}).to_list(length=500)
+    org_id = ctx["organization"]["id"]
+    memberships = await db.memberships.find({"organization_id": org_id}).to_list(length=500)
     user_ids = [m["user_id"] for m in memberships]
     users = await db.users.find({"id": {"$in": user_ids}}).to_list(length=500)
     by_id = {u["id"]: u for u in users}
+
+    # Per-user projects assigned (via project_members)
+    pm_docs = await db.project_members.find(
+        {"organization_id": org_id, "user_id": {"$in": user_ids}}
+    ).to_list(length=5000)
+    projects_by_user: dict[str, set[str]] = {}
+    for m in pm_docs:
+        projects_by_user.setdefault(m["user_id"], set()).add(m["project_id"])
+    # Include projects where user is PM (implicit membership)
+    pm_projects = await db.projects.find(
+        {"organization_id": org_id, "deleted_at": None, "project_manager_id": {"$in": user_ids}},
+        {"id": 1, "project_manager_id": 1},
+    ).to_list(length=5000)
+    for p in pm_projects:
+        projects_by_user.setdefault(p["project_manager_id"], set()).add(p["id"])
+
+    # Per-user open task count (assigned & not done)
+    task_agg = db.tasks.aggregate(
+        [
+            {"$match": {
+                "organization_id": org_id,
+                "deleted_at": None,
+                "assignee_id": {"$in": user_ids},
+                "status": {"$ne": "done"},
+            }},
+            {"$group": {"_id": "$assignee_id", "count": {"$sum": 1}}},
+        ]
+    )
+    tasks_by_user: dict[str, int] = {}
+    async for row in task_agg:
+        tasks_by_user[row["_id"]] = row["count"]
+
     out = []
     for m in memberships:
         u = by_id.get(m["user_id"])
@@ -100,10 +133,125 @@ async def list_members(ctx: dict = Depends(get_current_membership)):
                 "role": m["role"],
                 "is_active": m.get("is_active", True) and u.get("is_active", True),
                 "created_at": m["created_at"],
+                "projects_count": len(projects_by_user.get(u["id"], set())),
+                "open_tasks_count": tasks_by_user.get(u["id"], 0),
+                "last_login_at": u.get("last_login_at"),
             }
         )
-    out.sort(key=lambda x: (0 if x["role"] == "admin" else 1, x["name"] or ""))
+    out.sort(key=lambda x: (0 if x["role"] == "admin" else 1, (x["name"] or "").lower()))
     return envelope(out)
+
+
+@router.get("/current/members/{user_id}")
+async def get_member_detail(user_id: str, ctx: dict = Depends(get_current_membership)):
+    """Detailed profile of a member: profile, per-project assignments (with roles), tasks/activity summary."""
+    db = get_db()
+    org_id = ctx["organization"]["id"]
+
+    m = await db.memberships.find_one({"user_id": user_id, "organization_id": org_id})
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found")
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Projects assigned (via project_members OR PM)
+    pm_docs = await db.project_members.find(
+        {"organization_id": org_id, "user_id": user_id}
+    ).to_list(length=1000)
+    project_ids = {p["project_id"] for p in pm_docs}
+    pm_projects = await db.projects.find(
+        {"organization_id": org_id, "deleted_at": None, "project_manager_id": user_id},
+        {"id": 1},
+    ).to_list(length=1000)
+    project_ids.update({p["id"] for p in pm_projects})
+
+    roles_by_project: dict[str, list[str]] = {p["project_id"]: list(p.get("roles", [])) for p in pm_docs}
+
+    projects = await db.projects.find(
+        {"id": {"$in": list(project_ids)}, "organization_id": org_id, "deleted_at": None}
+    ).sort("created_at", -1).to_list(length=1000)
+
+    projects_out = []
+    for p in projects:
+        p.pop("_id", None)
+        roles = list(roles_by_project.get(p["id"], []))
+        is_pm = p.get("project_manager_id") == user_id
+        if is_pm and "project_manager" not in roles:
+            roles.append("project_manager")
+        projects_out.append(
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "status": p.get("status"),
+                "location": p.get("location"),
+                "archived": p.get("archived", False),
+                "is_project_manager": is_pm,
+                "roles": roles,
+            }
+        )
+
+    # Task summary
+    task_stats_agg = db.tasks.aggregate(
+        [
+            {"$match": {"organization_id": org_id, "deleted_at": None, "assignee_id": user_id}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+        ]
+    )
+    task_stats = {"todo": 0, "in_progress": 0, "done": 0}
+    async for row in task_stats_agg:
+        task_stats[row["_id"]] = row["count"]
+
+    open_issues = await db.issues.count_documents(
+        {"organization_id": org_id, "deleted_at": None, "assignee_id": user_id, "status": {"$in": ["open", "in_progress"]}}
+    )
+
+    # Recent activity by this user (last 15)
+    activity_docs = await db.activity_log.find(
+        {"organization_id": org_id, "actor_id": user_id}
+    ).sort("created_at", -1).limit(15).to_list(length=15)
+    project_names = {p["id"]: p["name"] for p in projects}
+    # Also fetch names of any projects referenced in activity but not in projects list
+    missing_ids = [a["project_id"] for a in activity_docs if a.get("project_id") and a["project_id"] not in project_names]
+    if missing_ids:
+        extra = await db.projects.find({"id": {"$in": missing_ids}}, {"id": 1, "name": 1}).to_list(length=200)
+        for p in extra:
+            project_names[p["id"]] = p["name"]
+    activity_out = []
+    for a in activity_docs:
+        a.pop("_id", None)
+        a["project_name"] = project_names.get(a.get("project_id"))
+        activity_out.append(a)
+
+    m.pop("_id", None)
+    u.pop("_id", None)
+    return envelope(
+        {
+            "user": {
+                "id": u["id"],
+                "email": u["email"],
+                "name": u.get("name"),
+                "phone": u.get("phone"),
+                "last_login_at": u.get("last_login_at"),
+                "created_at": u.get("created_at"),
+            },
+            "membership": {
+                "id": m["id"],
+                "role": m["role"],
+                "is_active": m.get("is_active", True),
+                "created_at": m.get("created_at"),
+                "invited_by": m.get("invited_by"),
+            },
+            "projects": projects_out,
+            "task_stats": {
+                **task_stats,
+                "total": sum(task_stats.values()),
+                "open": task_stats["todo"] + task_stats["in_progress"],
+            },
+            "open_issues": open_issues,
+            "recent_activity": activity_out,
+        }
+    )
 
 
 @router.post("/current/invites")

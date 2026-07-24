@@ -13,6 +13,7 @@ import LogDetailPage from "./pages/LogDetail";
 import IssueDetailPage from "./pages/IssueDetail";
 import NotificationsPage from "./pages/Notifications";
 import TeamPage from "./pages/Team";
+import MemberDetailPage from "./pages/MemberDetail";
 
 const Requires = ({ children, needOrg = true }) => {
   const { user, orgs, orgId, loading } = useAuth();
@@ -62,6 +63,7 @@ function App() {
           <Route path="/projects/:projectId/logs/:logId" element={<LogDetailPage />} />
           <Route path="/projects/:projectId/issues/:issueId" element={<IssueDetailPage />} />
           <Route path="/team" element={<TeamPage />} />
+          <Route path="/team/:userId" element={<MemberDetailPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
         </Route>
 

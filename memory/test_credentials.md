@@ -16,6 +16,15 @@ The seeded demo organization is: **"Demo Constructions Pvt Ltd"**.
 
 All four are members of the "Demo Constructions Pvt Ltd" organization.
 
+## Demo project memberships (per-project role assignments)
+
+| Project                          | Members (per-project role)                                        |
+|----------------------------------|-------------------------------------------------------------------|
+| Skyline Residences — Tower B    | Anita Sharma (project_manager), Sunil Patel (site_engineer), Owner Sethi (viewer) |
+| Green Fields Warehousing        | Anita Sharma (project_manager), Sunil Patel (site_engineer)      |
+
+**Key: Owner Sethi (viewer@demo.com) is only assigned to "Skyline Residences", so should NOT see "Green Fields Warehousing" in their projects list. Org admin (admin@demo.com) sees ALL projects.**
+
 ## How to sign in from the UI
 1. Open `/login`.
 2. Click one of the "Try the demo" buttons (Admin / PM / Engineer / Viewer) — this auto-requests + auto-verifies OTP in dev mode and signs you in directly.

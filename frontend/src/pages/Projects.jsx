@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, MagnifyingGlass, Buildings, MapPin, ListChecks, Warning, ClipboardText, Users } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, Buildings, MapPin, ListChecks, Warning, ClipboardText, Users, ShieldCheck } from "@phosphor-icons/react";
 import { API, errMsg } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { StatusChip } from "../components/Chip";
 import { Modal } from "../components/Modal";
 import { Empty, Loader, Skeleton } from "../components/State";
-import { PROJECT_STATUS_LABEL } from "../lib/labels";
+import { PROJECT_STATUS_LABEL, ROLE_LABEL } from "../lib/labels";
+import { clsx } from "clsx";
 
 const ProjectCard = ({ p, onOpen }) => (
   <button
@@ -25,6 +26,26 @@ const ProjectCard = ({ p, onOpen }) => (
     {p.location && (
       <div className="text-xs flex items-center gap-1 text-zinc-600">
         <MapPin size={14} weight="bold" /> {p.location}
+      </div>
+    )}
+    {(p.my_roles || []).length > 0 && (
+      <div className="flex flex-wrap gap-1" data-testid={`project-my-roles-${p.id}`}>
+        <span className="text-[10px] uppercase tracking-widest text-zinc-500 mr-1 flex items-center gap-1">
+          <ShieldCheck size={11} weight="bold"/> Your role:
+        </span>
+        {p.my_roles.map((r) => (
+          <span
+            key={r}
+            className={clsx("chip text-[10px] uppercase tracking-widest",
+              r === "admin" && "bg-ink text-safety",
+              r === "project_manager" && "bg-blue-700 text-white",
+              r === "site_engineer" && "bg-amber-500 text-black",
+              r === "viewer" && "bg-zinc-500 text-white",
+            )}
+          >
+            {ROLE_LABEL[r] || r}
+          </span>
+        ))}
       </div>
     )}
     <div className="flex items-center gap-2 mt-1">

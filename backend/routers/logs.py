@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pymongo.errors import DuplicateKeyError
 
 from core.db import get_db
-from core.deps import get_current_membership, require_roles
+from core.deps import project_ctx, require_project_roles
 from core.response import envelope, paginate_meta
 from core.security import now_utc
 from core.utils import new_id
@@ -41,7 +41,7 @@ async def _project_or_404(db, project_id, org_id):
 async def create_log(
     project_id: str,
     payload: DailyLogCreate,
-    ctx: dict = Depends(require_roles("admin", "project_manager", "site_engineer")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager", "site_engineer")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
@@ -107,7 +107,7 @@ async def create_log(
 @router.get("")
 async def list_logs(
     project_id: str,
-    ctx: dict = Depends(get_current_membership),
+    ctx: dict = Depends(project_ctx),
     date_from: str | None = None,
     date_to: str | None = None,
     submitted_by: str | None = None,
@@ -123,7 +123,7 @@ async def list_logs(
     query: dict = {"project_id": project_id, "organization_id": org_id, "deleted_at": None}
 
     # Site engineers see only their logs
-    if ctx["membership"]["role"] == "site_engineer":
+    if ctx["effective_role"] == "site_engineer":
         query["submitted_by"] = ctx["user"]["id"]
     elif submitted_by:
         query["submitted_by"] = submitted_by
@@ -155,13 +155,13 @@ async def list_logs(
 
 
 @router.get("/{log_id}")
-async def get_log(project_id: str, log_id: str, ctx: dict = Depends(get_current_membership)):
+async def get_log(project_id: str, log_id: str, ctx: dict = Depends(project_ctx)):
     db = get_db()
     org_id = ctx["organization"]["id"]
     doc = await db.daily_logs.find_one({"id": log_id, "project_id": project_id, "organization_id": org_id, "deleted_at": None})
     if not doc:
         raise HTTPException(status_code=404, detail="Log not found")
-    if ctx["membership"]["role"] == "site_engineer" and doc["submitted_by"] != ctx["user"]["id"]:
+    if ctx["effective_role"] == "site_engineer" and doc["submitted_by"] != ctx["user"]["id"]:
         raise HTTPException(status_code=403, detail="You can only view your own logs.")
     doc.pop("_id", None)
     u = await db.users.find_one({"id": doc["submitted_by"]})
@@ -175,7 +175,7 @@ async def update_log(
     project_id: str,
     log_id: str,
     payload: DailyLogUpdate,
-    ctx: dict = Depends(require_roles("admin", "project_manager", "site_engineer")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager", "site_engineer")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
@@ -188,11 +188,11 @@ async def update_log(
         unlocked = doc.get("unlocked_until") and doc["unlocked_until"] > now_utc()
         if not unlocked:
             raise HTTPException(status_code=403, detail="Submitted logs are read-only. Ask an admin to unlock.")
-        if not is_owner and ctx["membership"]["role"] not in ("admin", "project_manager"):
+        if not is_owner and ctx["effective_role"] not in ("admin", "project_manager"):
             raise HTTPException(status_code=403, detail="Only the author can edit an unlocked log.")
     else:
         # draft: only owner can edit
-        if not is_owner and ctx["membership"]["role"] not in ("admin", "project_manager"):
+        if not is_owner and ctx["effective_role"] not in ("admin", "project_manager"):
             raise HTTPException(status_code=403, detail="Only the author can edit this draft.")
 
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
@@ -219,7 +219,7 @@ async def update_log(
 
 
 @router.post("/{log_id}/unlock")
-async def unlock_log(project_id: str, log_id: str, ctx: dict = Depends(require_roles("admin"))):
+async def unlock_log(project_id: str, log_id: str, ctx: dict = Depends(require_project_roles("admin"))):
     db = get_db()
     org_id = ctx["organization"]["id"]
     doc = await db.daily_logs.find_one({"id": log_id, "project_id": project_id, "organization_id": org_id})

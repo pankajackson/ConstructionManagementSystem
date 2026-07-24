@@ -5,11 +5,18 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.db import get_db
-from core.deps import can_manage_project, get_current_membership, require_roles
+from core.deps import (
+    get_accessible_project_ids,
+    get_current_membership,
+    project_ctx,
+    require_project_roles,
+    require_roles,
+    resolve_project_access,
+)
 from core.response import envelope, paginate_meta
 from core.security import now_utc
 from core.utils import new_id
-from models.schemas import ProjectCreate, ProjectUpdate
+from models.schemas import ProjectCreate, ProjectMemberAssign, ProjectMemberUpdate, ProjectUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -30,6 +37,34 @@ async def _log_activity(db, org_id: str, project_id: str, actor_id: str, action:
     )
 
 
+async def _ensure_pm_membership(db, project_id: str, org_id: str, user_id: str, actor_id: str) -> None:
+    """Idempotently record the PM as a project_member with project_manager role."""
+    if not user_id:
+        return
+    existing = await db.project_members.find_one({"project_id": project_id, "user_id": user_id})
+    if existing:
+        roles = existing.get("roles", [])
+        if "project_manager" not in roles:
+            roles = list(dict.fromkeys([*roles, "project_manager"]))
+            await db.project_members.update_one(
+                {"id": existing["id"]},
+                {"$set": {"roles": roles, "updated_at": now_utc()}},
+            )
+        return
+    await db.project_members.insert_one(
+        {
+            "id": new_id(),
+            "organization_id": org_id,
+            "project_id": project_id,
+            "user_id": user_id,
+            "roles": ["project_manager"],
+            "added_by": actor_id,
+            "added_at": now_utc(),
+            "updated_at": now_utc(),
+        }
+    )
+
+
 @router.post("")
 async def create_project(payload: ProjectCreate, ctx: dict = Depends(require_roles("admin", "project_manager"))):
     db = get_db()
@@ -43,15 +78,17 @@ async def create_project(payload: ProjectCreate, ctx: dict = Depends(require_rol
         if not pm or pm["role"] not in ("admin", "project_manager"):
             raise HTTPException(status_code=400, detail="Assigned project manager must be an Admin or Project Manager in this org.")
 
+    project_id = new_id()
+    pm_user_id = payload.project_manager_id or ctx["user"]["id"]
     doc = {
-        "id": new_id(),
+        "id": project_id,
         "organization_id": org_id,
         "name": payload.name.strip(),
         "description": payload.description,
         "location": payload.location,
         "start_date": payload.start_date,
         "expected_end_date": payload.expected_end_date,
-        "project_manager_id": payload.project_manager_id or ctx["user"]["id"],
+        "project_manager_id": pm_user_id,
         "status": "on_track",
         "archived": False,
         "created_by": ctx["user"]["id"],
@@ -60,6 +97,22 @@ async def create_project(payload: ProjectCreate, ctx: dict = Depends(require_rol
         "deleted_at": None,
     }
     await db.projects.insert_one(doc)
+    # Auto-assign PM as project member; also add creator if different (as admin role for the project)
+    await _ensure_pm_membership(db, project_id, org_id, pm_user_id, ctx["user"]["id"])
+    if ctx["user"]["id"] != pm_user_id:
+        # Creator (admin/PM) gets admin project role for convenience
+        await db.project_members.insert_one(
+            {
+                "id": new_id(),
+                "organization_id": org_id,
+                "project_id": project_id,
+                "user_id": ctx["user"]["id"],
+                "roles": ["admin"] if ctx["membership"]["role"] == "admin" else ["project_manager"],
+                "added_by": ctx["user"]["id"],
+                "added_at": now_utc(),
+                "updated_at": now_utc(),
+            }
+        )
     await _log_activity(db, org_id, doc["id"], ctx["user"]["id"], "project.created", "project", doc["id"], {"name": doc["name"]})
     doc.pop("_id", None)
     return envelope(doc)
@@ -76,11 +129,20 @@ async def list_projects(
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
+    org_role = ctx["membership"]["role"]
+
     query: dict = {"organization_id": org_id, "deleted_at": None, "archived": archived}
     if status:
         query["status"] = status
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
+
+    # Restrict to accessible projects (org admins see all)
+    accessible = await get_accessible_project_ids(db, ctx["user"]["id"], org_id, org_role)
+    if accessible is not None:
+        if not accessible:
+            return envelope([], meta=paginate_meta(0, page, page_size))
+        query["id"] = {"$in": accessible}
 
     total = await db.projects.count_documents(query)
     skip = (page - 1) * page_size
@@ -91,6 +153,7 @@ async def list_projects(
     task_counts = {}
     open_issue_counts = {}
     log_counts = {}
+    my_roles_by_project: dict[str, list[str]] = {}
     if project_ids:
         # Aggregate task counts
         agg = db.tasks.aggregate(
@@ -125,6 +188,13 @@ async def list_projects(
         async for row in lg:
             log_counts[row["_id"]] = row["count"]
 
+        # Compute the caller's per-project roles for badges on cards
+        my_pms = await db.project_members.find(
+            {"organization_id": org_id, "user_id": ctx["user"]["id"], "project_id": {"$in": project_ids}}
+        ).to_list(length=len(project_ids))
+        for m in my_pms:
+            my_roles_by_project[m["project_id"]] = list(m.get("roles", []))
+
     out = []
     for d in docs:
         d.pop("_id", None)
@@ -137,19 +207,24 @@ async def list_projects(
             "open_issues": open_issue_counts.get(d["id"], 0),
             "logs_this_week": log_counts.get(d["id"], 0),
         }
+        # Effective roles for the current user
+        if org_role == "admin":
+            d["my_roles"] = ["admin"]
+        else:
+            roles = list(my_roles_by_project.get(d["id"], []))
+            if d.get("project_manager_id") == ctx["user"]["id"] and "project_manager" not in roles:
+                roles.append("project_manager")
+            d["my_roles"] = roles
         out.append(d)
 
     return envelope(out, meta=paginate_meta(total, page, page_size))
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, ctx: dict = Depends(get_current_membership)):
+async def get_project(project_id: str, ctx: dict = Depends(project_ctx)):
     db = get_db()
     org_id = ctx["organization"]["id"]
-    p = await db.projects.find_one({"id": project_id, "organization_id": org_id, "deleted_at": None})
-    if not p:
-        raise HTTPException(status_code=404, detail="Project not found")
-    p.pop("_id", None)
+    p = ctx["project"]
 
     # Stats
     total_tasks = await db.tasks.count_documents({"project_id": project_id, "deleted_at": None})
@@ -162,8 +237,12 @@ async def get_project(project_id: str, ctx: dict = Depends(get_current_membershi
         {"project_id": project_id, "deleted_at": None, "status": "submitted", "created_at": {"$gte": week_ago}}
     )
 
-    # Team member count: distinct users active in the org (simplification for MVP)
-    team_count = await db.memberships.count_documents({"organization_id": org_id, "is_active": True})
+    # Team member count for THIS project (project_members + implicit PM)
+    pm_docs = await db.project_members.find({"project_id": project_id}).to_list(length=500)
+    member_user_ids = {m["user_id"] for m in pm_docs}
+    if p.get("project_manager_id"):
+        member_user_ids.add(p["project_manager_id"])
+    team_count = len(member_user_ids)
 
     # Recent activity — last 10
     activity_cursor = db.activity_log.find({"project_id": project_id}).sort("created_at", -1).limit(10)
@@ -195,6 +274,8 @@ async def get_project(project_id: str, ctx: dict = Depends(get_current_membershi
     }
     p["project_manager"] = pm
     p["recent_activity"] = activity_out
+    p["my_role"] = ctx["effective_role"]
+    p["my_roles"] = ctx["effective_roles"]
     return envelope(p)
 
 
@@ -202,13 +283,11 @@ async def get_project(project_id: str, ctx: dict = Depends(get_current_membershi
 async def update_project(
     project_id: str,
     payload: ProjectUpdate,
-    ctx: dict = Depends(require_roles("admin", "project_manager")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
-    project = await db.projects.find_one({"id": project_id, "organization_id": org_id, "deleted_at": None})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = ctx["project"]
 
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
     if not updates:
@@ -224,30 +303,27 @@ async def update_project(
 
     updates["updated_at"] = now_utc()
     await db.projects.update_one({"id": project_id}, {"$set": updates})
+    # If PM changed, ensure PM is a project member
+    if "project_manager_id" in updates and updates["project_manager_id"]:
+        await _ensure_pm_membership(db, project_id, org_id, updates["project_manager_id"], ctx["user"]["id"])
     updated = await db.projects.find_one({"id": project_id})
     updated.pop("_id", None)
     return envelope(updated)
 
 
 @router.post("/{project_id}/archive")
-async def archive_project(project_id: str, ctx: dict = Depends(require_roles("admin", "project_manager"))):
+async def archive_project(project_id: str, ctx: dict = Depends(require_project_roles("admin", "project_manager"))):
     db = get_db()
     org_id = ctx["organization"]["id"]
-    project = await db.projects.find_one({"id": project_id, "organization_id": org_id, "deleted_at": None})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
     await db.projects.update_one({"id": project_id}, {"$set": {"archived": True, "updated_at": now_utc()}})
     await _log_activity(db, org_id, project_id, ctx["user"]["id"], "project.archived", "project", project_id, {})
     return envelope({"archived": True})
 
 
 @router.post("/{project_id}/unarchive")
-async def unarchive_project(project_id: str, ctx: dict = Depends(require_roles("admin", "project_manager"))):
+async def unarchive_project(project_id: str, ctx: dict = Depends(require_project_roles("admin", "project_manager"))):
     db = get_db()
     org_id = ctx["organization"]["id"]
-    project = await db.projects.find_one({"id": project_id, "organization_id": org_id, "deleted_at": None})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
     await db.projects.update_one({"id": project_id}, {"$set": {"archived": False, "updated_at": now_utc()}})
     return envelope({"archived": False})
 
@@ -255,13 +331,10 @@ async def unarchive_project(project_id: str, ctx: dict = Depends(require_roles("
 @router.get("/{project_id}/activity")
 async def project_activity(
     project_id: str,
-    ctx: dict = Depends(get_current_membership),
+    ctx: dict = Depends(project_ctx),
     limit: int = Query(default=50, ge=1, le=200),
 ):
     db = get_db()
-    project = await db.projects.find_one({"id": project_id, "organization_id": ctx["organization"]["id"]})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
     activity = await db.activity_log.find({"project_id": project_id}).sort("created_at", -1).limit(limit).to_list(length=limit)
     actor_ids = list({a["actor_id"] for a in activity if a.get("actor_id")})
     users = await db.users.find({"id": {"$in": actor_ids}}).to_list(length=200)
@@ -273,3 +346,172 @@ async def project_activity(
         a["actor"] = {"id": u.get("id"), "name": u.get("name"), "email": u.get("email")}
         out.append(a)
     return envelope(out)
+
+
+# ============= Project Members =============
+
+@router.get("/{project_id}/members")
+async def list_project_members(project_id: str, ctx: dict = Depends(project_ctx)):
+    """List members assigned to this project, with per-project roles + org info."""
+    db = get_db()
+    org_id = ctx["organization"]["id"]
+    project = ctx["project"]
+
+    pm_docs = await db.project_members.find({"project_id": project_id}).to_list(length=500)
+    # Include the PM as an implicit member if not present in project_members
+    user_ids = {m["user_id"] for m in pm_docs}
+    implicit_pm = None
+    if project.get("project_manager_id") and project["project_manager_id"] not in user_ids:
+        implicit_pm = project["project_manager_id"]
+        user_ids.add(implicit_pm)
+
+    users = await db.users.find({"id": {"$in": list(user_ids)}}).to_list(length=500)
+    users_by_id = {u["id"]: u for u in users}
+
+    memberships = await db.memberships.find(
+        {"organization_id": org_id, "user_id": {"$in": list(user_ids)}}
+    ).to_list(length=500)
+    org_role_by_user = {m["user_id"]: m for m in memberships}
+
+    out = []
+    for m in pm_docs:
+        u = users_by_id.get(m["user_id"])
+        if not u:
+            continue
+        org_m = org_role_by_user.get(m["user_id"], {})
+        out.append(
+            {
+                "id": m["id"],
+                "user_id": u["id"],
+                "email": u["email"],
+                "name": u.get("name"),
+                "roles": list(m.get("roles", [])),
+                "org_role": org_m.get("role"),
+                "is_active": org_m.get("is_active", True) and u.get("is_active", True),
+                "added_at": m.get("added_at"),
+                "added_by": m.get("added_by"),
+                "is_project_manager": u["id"] == project.get("project_manager_id"),
+            }
+        )
+    if implicit_pm:
+        u = users_by_id.get(implicit_pm)
+        if u:
+            org_m = org_role_by_user.get(implicit_pm, {})
+            out.append(
+                {
+                    "id": None,
+                    "user_id": u["id"],
+                    "email": u["email"],
+                    "name": u.get("name"),
+                    "roles": ["project_manager"],
+                    "org_role": org_m.get("role"),
+                    "is_active": org_m.get("is_active", True) and u.get("is_active", True),
+                    "added_at": None,
+                    "added_by": None,
+                    "is_project_manager": True,
+                }
+            )
+    out.sort(key=lambda x: (not x["is_project_manager"], (x["name"] or "").lower()))
+    return envelope(out)
+
+
+@router.post("/{project_id}/members")
+async def assign_project_member(
+    project_id: str,
+    payload: ProjectMemberAssign,
+    ctx: dict = Depends(require_project_roles("admin", "project_manager")),
+):
+    db = get_db()
+    org_id = ctx["organization"]["id"]
+
+    target = await db.memberships.find_one(
+        {"user_id": payload.user_id, "organization_id": org_id, "is_active": True}
+    )
+    if not target:
+        raise HTTPException(status_code=400, detail="User is not an active member of this organization.")
+
+    existing = await db.project_members.find_one({"project_id": project_id, "user_id": payload.user_id})
+    if existing:
+        raise HTTPException(status_code=409, detail="User is already assigned to this project. Use update to change roles.")
+
+    doc = {
+        "id": new_id(),
+        "organization_id": org_id,
+        "project_id": project_id,
+        "user_id": payload.user_id,
+        "roles": payload.roles,
+        "added_by": ctx["user"]["id"],
+        "added_at": now_utc(),
+        "updated_at": now_utc(),
+    }
+    await db.project_members.insert_one(doc)
+    await _log_activity(
+        db, org_id, project_id, ctx["user"]["id"], "project.member_assigned", "project_member", doc["id"],
+        {"user_id": payload.user_id, "roles": payload.roles},
+    )
+    # Notify the assigned user
+    await db.notifications.insert_one(
+        {
+            "id": new_id(),
+            "organization_id": org_id,
+            "user_id": payload.user_id,
+            "type": "project.assigned",
+            "title": "Assigned to a project",
+            "message": f"You were assigned to {ctx['project']['name']} as {', '.join(payload.roles)}.",
+            "entity_type": "project",
+            "entity_id": project_id,
+            "project_id": project_id,
+            "is_read": False,
+            "created_at": now_utc(),
+        }
+    )
+    doc.pop("_id", None)
+    return envelope(doc)
+
+
+@router.patch("/{project_id}/members/{user_id}")
+async def update_project_member(
+    project_id: str,
+    user_id: str,
+    payload: ProjectMemberUpdate,
+    ctx: dict = Depends(require_project_roles("admin", "project_manager")),
+):
+    db = get_db()
+    org_id = ctx["organization"]["id"]
+    m = await db.project_members.find_one({"project_id": project_id, "user_id": user_id})
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found on this project")
+    await db.project_members.update_one(
+        {"id": m["id"]},
+        {"$set": {"roles": payload.roles, "updated_at": now_utc()}},
+    )
+    await _log_activity(
+        db, org_id, project_id, ctx["user"]["id"], "project.member_roles_updated", "project_member", m["id"],
+        {"user_id": user_id, "roles": payload.roles},
+    )
+    return envelope({"user_id": user_id, "roles": payload.roles})
+
+
+@router.delete("/{project_id}/members/{user_id}")
+async def remove_project_member(
+    project_id: str,
+    user_id: str,
+    ctx: dict = Depends(require_project_roles("admin", "project_manager")),
+):
+    db = get_db()
+    org_id = ctx["organization"]["id"]
+    project = ctx["project"]
+    if project.get("project_manager_id") == user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove the Project Manager. Reassign PM first.",
+        )
+    m = await db.project_members.find_one({"project_id": project_id, "user_id": user_id})
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found on this project")
+    await db.project_members.delete_one({"id": m["id"]})
+    await _log_activity(
+        db, org_id, project_id, ctx["user"]["id"], "project.member_removed", "project_member", m["id"],
+        {"user_id": user_id},
+    )
+    return envelope({"removed": True})

@@ -4,7 +4,8 @@ import { toast } from "sonner";
 import { clsx } from "clsx";
 import {
   Plus, Kanban, ClipboardText, Warning, ArrowLeft, Archive, Users as UsersIcon,
-  ArrowClockwise, ChatCircle, MapPin, DownloadSimple, DotsThree, Rows, SquaresFour
+  ArrowClockwise, ChatCircle, MapPin, DownloadSimple, DotsThree, Rows, SquaresFour,
+  UserPlus, Trash, PencilSimple, ArrowRight, ShieldCheck
 } from "@phosphor-icons/react";
 import { API, errMsg } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -15,8 +16,10 @@ import { Avatar } from "../components/Avatar";
 import { KanbanBoard } from "../components/KanbanBoard";
 import {
   fmtDate, fmtDateTime, fmtRelative, PROJECT_STATUS_LABEL, TASK_STATUS_LABEL,
-  ISSUE_STATUS_LABEL, PRIORITY_LABEL, WEATHER_LABEL, CATEGORY_LABEL
+  ISSUE_STATUS_LABEL, PRIORITY_LABEL, WEATHER_LABEL, CATEGORY_LABEL, ROLE_LABEL
 } from "../lib/labels";
+
+const ALL_ROLES = ["admin", "project_manager", "site_engineer", "viewer"];
 
 const Tab = ({ active, onClick, children, testid, count }) => (
   <button
@@ -582,7 +585,9 @@ const CreateIssueModal = ({ open, onClose, onCreated, projectId, members }) => {
 };
 
 // ============== OVERVIEW ==============
-const Overview = ({ project, members, onQuickAdd }) => (
+const Overview = ({ project, members, onQuickAdd, onOpenMembersTab }) => {
+  const navigate = useNavigate();
+  return (
   <div className="grid lg:grid-cols-3 gap-5">
     <div className="lg:col-span-2 space-y-5">
       <div className="card-brut p-5">
@@ -644,48 +649,322 @@ const Overview = ({ project, members, onQuickAdd }) => (
       </div>
       <div className="card-brut">
         <div className="p-4 border-b-2 border-ink bg-ink text-white flex items-center justify-between">
-          <h3 className="heading text-2xl uppercase">Team</h3>
-          <span className="text-[10px] uppercase tracking-widest">{members.length}</span>
+          <h3 className="heading text-2xl uppercase">Project Team</h3>
+          <button
+            className="text-[10px] uppercase tracking-widest hover:text-safety flex items-center gap-1"
+            onClick={onOpenMembersTab}
+            data-testid="overview-manage-members"
+          >
+            Manage <ArrowRight size={12} weight="bold"/>
+          </button>
         </div>
-        <ul className="divide-y-2 divide-ink">
-          {members.slice(0,8).map((m)=>(
-            <li key={m.user_id} className="p-3 flex items-center gap-3">
-              <Avatar user={{name:m.name,email:m.email}} size={30}/>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm truncate">{m.name || m.email}</div>
-                <div className="text-[10px] uppercase tracking-widest text-zinc-600">{m.role.replace("_"," ")}</div>
-              </div>
-            </li>
-          ))}
-        </ul>
+        {members.length === 0 ? (
+          <div className="p-4 text-sm text-zinc-500">No members assigned yet.</div>
+        ) : (
+          <ul className="divide-y-2 divide-ink">
+            {members.slice(0,8).map((m)=>(
+              <li
+                key={m.user_id}
+                className="p-3 flex items-center gap-3 hover:bg-muted cursor-pointer"
+                onClick={()=>navigate(`/team/${m.user_id}`)}
+                data-testid={`overview-member-${m.user_id}`}
+              >
+                <Avatar user={{name:m.name,email:m.email}} size={30}/>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-sm truncate flex items-center gap-2">
+                    {m.name || m.email}
+                    {m.is_project_manager && <span className="chip bg-safety text-ink text-[9px] uppercase tracking-widest">PM</span>}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-widest text-zinc-600">
+                    {(m.roles || []).map((r) => ROLE_LABEL[r] || r).join(" · ") || (m.org_role ? ROLE_LABEL[m.org_role] : "")}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   </div>
+  );
+};
+
+// ============== MEMBERS PANEL ==============
+const MembersPanel = ({ projectId, members, orgMembers, canManage, onChanged }) => {
+  const [showAssign, setShowAssign] = useState(false);
+  const [editing, setEditing] = useState(null); // member being edited
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const navigate = useNavigate();
+
+  const memberUserIds = new Set(members.map((m) => m.user_id));
+  const availableToAssign = orgMembers.filter(
+    (o) => o.is_active && !memberUserIds.has(o.user_id)
+  );
+
+  const remove = async (m) => {
+    try {
+      await API.delete(`/projects/${projectId}/members/${m.user_id}`);
+      toast.success("Member removed from project");
+      onChanged();
+    } catch (e) { toast.error(errMsg(e)); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="heading text-3xl uppercase">Project Members</h2>
+          <p className="text-sm text-zinc-600 mt-1">
+            Only assigned members can see or work on this project. Assign per-project roles to control access.
+          </p>
+        </div>
+        {canManage && (
+          <button
+            className="btn-brut safety"
+            onClick={() => setShowAssign(true)}
+            data-testid="assign-member-btn"
+            disabled={availableToAssign.length === 0}
+            title={availableToAssign.length === 0 ? "All org members are already assigned. Invite more from Team page." : ""}
+          >
+            <UserPlus size={18} weight="bold"/> Assign Member
+          </button>
+        )}
+      </div>
+
+      <div className="card-brut divide-y-2 divide-ink" data-testid="project-members-list">
+        <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 bg-ink text-white text-[11px] uppercase tracking-widest font-bold">
+          <div className="col-span-4">Member</div>
+          <div className="col-span-2">Org Role</div>
+          <div className="col-span-4">Project Roles</div>
+          <div className="col-span-2 text-right">Actions</div>
+        </div>
+        {members.length === 0 ? (
+          <div className="p-6 text-zinc-500 text-sm">No members assigned yet.</div>
+        ) : (
+          members.map((m) => (
+            <div
+              key={m.user_id}
+              className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-3 items-center hover:bg-muted"
+              data-testid={`project-member-${m.user_id}`}
+            >
+              <div className="md:col-span-4 flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => navigate(`/team/${m.user_id}`)}>
+                <Avatar user={{name:m.name,email:m.email}} size={36}/>
+                <div className="min-w-0">
+                  <div className="font-bold truncate flex items-center gap-2">
+                    {m.name || m.email}
+                    {m.is_project_manager && <span className="chip bg-safety text-ink text-[9px] uppercase tracking-widest">PM</span>}
+                  </div>
+                  <div className="text-xs text-zinc-600 truncate">{m.email}</div>
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <span className="chip bg-zinc-800 text-white text-[10px]">{ROLE_LABEL[m.org_role] || m.org_role || "—"}</span>
+              </div>
+              <div className="md:col-span-4 flex flex-wrap gap-2">
+                {(m.roles || []).length === 0 ? (
+                  <span className="text-xs text-zinc-500">None (implicit PM)</span>
+                ) : (
+                  (m.roles || []).map((r) => (
+                    <span key={r} className={clsx("chip text-[10px] uppercase tracking-widest",
+                      r === "admin" && "bg-ink text-safety",
+                      r === "project_manager" && "bg-blue-700 text-white",
+                      r === "site_engineer" && "bg-amber-500 text-black",
+                      r === "viewer" && "bg-zinc-500 text-white",
+                    )}>
+                      {ROLE_LABEL[r] || r}
+                    </span>
+                  ))
+                )}
+              </div>
+              <div className="md:col-span-2 flex justify-start md:justify-end gap-2">
+                {canManage && m.id && (
+                  <>
+                    <button
+                      className="btn-brut secondary text-xs h-9 px-2"
+                      onClick={() => setEditing(m)}
+                      data-testid={`edit-roles-${m.user_id}`}
+                      title="Edit roles"
+                    >
+                      <PencilSimple size={14} weight="bold"/>
+                    </button>
+                    {!m.is_project_manager && (
+                      <button
+                        className="btn-brut danger text-xs h-9 px-2"
+                        onClick={() => setConfirmRemove(m)}
+                        data-testid={`remove-member-${m.user_id}`}
+                        title="Remove from project"
+                      >
+                        <Trash size={14} weight="bold"/>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {showAssign && (
+        <AssignMemberModal
+          projectId={projectId}
+          available={availableToAssign}
+          onClose={() => setShowAssign(false)}
+          onDone={() => { setShowAssign(false); onChanged(); }}
+        />
+      )}
+      {editing && (
+        <EditRolesModal
+          projectId={projectId}
+          member={editing}
+          onClose={() => setEditing(null)}
+          onDone={() => { setEditing(null); onChanged(); }}
+        />
+      )}
+      <ConfirmDialog
+        open={!!confirmRemove}
+        title="Remove from project?"
+        message={`Remove ${confirmRemove?.name || confirmRemove?.email || "this member"} from the project? They will lose access immediately.`}
+        confirmLabel="Remove"
+        danger
+        onCancel={() => setConfirmRemove(null)}
+        onConfirm={() => { remove(confirmRemove); setConfirmRemove(null); }}
+      />
+    </div>
+  );
+};
+
+const RolesPicker = ({ value, onChange, testid }) => (
+  <div className="grid grid-cols-2 gap-2" data-testid={testid}>
+    {ALL_ROLES.map((r) => {
+      const active = value.includes(r);
+      return (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onChange(active ? value.filter((x) => x !== r) : [...value, r])}
+          className={clsx(
+            "border-2 border-ink px-3 py-2 text-left font-bold uppercase tracking-wider text-sm flex items-center gap-2",
+            active ? "bg-safety text-ink" : "bg-white text-ink hover:bg-muted"
+          )}
+          data-testid={`role-pick-${r}`}
+        >
+          <ShieldCheck size={14} weight={active ? "fill" : "bold"}/> {ROLE_LABEL[r]}
+        </button>
+      );
+    })}
+  </div>
 );
+
+const AssignMemberModal = ({ projectId, available, onClose, onDone }) => {
+  const [userId, setUserId] = useState(available[0]?.user_id || "");
+  const [roles, setRoles] = useState(["site_engineer"]);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!userId) { toast.error("Select a member"); return; }
+    if (roles.length === 0) { toast.error("Pick at least one role"); return; }
+    setBusy(true);
+    try {
+      await API.post(`/projects/${projectId}/members`, { user_id: userId, roles });
+      toast.success("Member assigned");
+      onDone();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title="Assign Member to Project" testid="assign-member-modal"
+      footer={<>
+        <button className="btn-brut secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-brut safety" onClick={submit} disabled={busy || !userId || roles.length === 0} data-testid="submit-assign">
+          {busy ? "Assigning..." : "Assign"}
+        </button>
+      </>}
+    >
+      <div className="space-y-4">
+        <label className="block">
+          <span className="text-xs font-bold uppercase tracking-widest">Member *</span>
+          <select className="input-brut mt-1" value={userId} onChange={(e) => setUserId(e.target.value)} data-testid="assign-user-select">
+            {available.length === 0 && <option value="">No members available</option>}
+            {available.map((u) => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.name || u.email} ({ROLE_LABEL[u.role]})
+              </option>
+            ))}
+          </select>
+        </label>
+        <div>
+          <span className="text-xs font-bold uppercase tracking-widest">Project Roles *</span>
+          <p className="text-[11px] text-zinc-600 mt-1 mb-2">Select one or more roles. Each grants access to specific sections of this project.</p>
+          <RolesPicker value={roles} onChange={setRoles} testid="assign-roles-picker"/>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const EditRolesModal = ({ projectId, member, onClose, onDone }) => {
+  const [roles, setRoles] = useState(member.roles || []);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (roles.length === 0) { toast.error("Pick at least one role"); return; }
+    setBusy(true);
+    try {
+      await API.patch(`/projects/${projectId}/members/${member.user_id}`, { roles });
+      toast.success("Roles updated");
+      onDone();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title={`Edit roles — ${member.name || member.email}`} testid="edit-roles-modal"
+      footer={<>
+        <button className="btn-brut secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-brut safety" onClick={submit} disabled={busy || roles.length === 0} data-testid="submit-edit-roles">
+          {busy ? "Saving..." : "Save"}
+        </button>
+      </>}
+    >
+      <div className="space-y-3">
+        <p className="text-[11px] text-zinc-600">Each role grants access to specific sections of the project.</p>
+        <RolesPicker value={roles} onChange={setRoles} testid="edit-roles-picker"/>
+      </div>
+    </Modal>
+  );
+};
 
 // ============== MAIN ==============
 export default function ProjectDetailPage() {
   const { projectId } = useParams();
   const [project, setProject] = useState(null);
-  const [members, setMembers] = useState([]);
+  const [projectMembers, setProjectMembers] = useState([]);
+  const [orgMembers, setOrgMembers] = useState([]);
   const [tab, setTab] = useState("overview");
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const { currentRole } = useAuth();
   const navigate = useNavigate();
-  const canManage = ["admin", "project_manager"].includes(currentRole);
+
+  const effectiveRole = project?.my_role || currentRole;
+  const canManage = ["admin", "project_manager"].includes(effectiveRole);
 
   const load = useCallback(async () => {
     try {
-      const [pRes, mRes] = await Promise.all([
+      const [pRes, pmRes, omRes] = await Promise.all([
         API.get(`/projects/${projectId}`),
+        API.get(`/projects/${projectId}/members`),
         API.get(`/organizations/current/members`),
       ]);
       setProject(pRes.data.data);
-      setMembers(mRes.data.data);
+      setProjectMembers(pmRes.data.data);
+      setOrgMembers(omRes.data.data);
     } catch (e) { toast.error(errMsg(e)); navigate("/projects"); }
   }, [projectId, navigate]);
   useEffect(() => { load(); }, [load]);
+
+  const reloadMembers = useCallback(async () => {
+    try {
+      const { data } = await API.get(`/projects/${projectId}/members`);
+      setProjectMembers(data.data);
+    } catch (e) { toast.error(errMsg(e)); }
+  }, [projectId]);
 
   const onQuickAdd = (kind) => {
     if (kind === "task") setTab("tasks");
@@ -711,6 +990,11 @@ export default function ProjectDetailPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <StatusChip kind="project" value={project.status}/>
               {project.archived && <span className="chip bg-zinc-500 text-white">Archived</span>}
+              {project.my_role && (
+                <span className="chip bg-ink text-safety text-[10px] uppercase tracking-widest" data-testid="my-project-role">
+                  Your role: {ROLE_LABEL[project.my_role]}
+                </span>
+              )}
             </div>
             <h1 className="heading text-4xl md:text-5xl uppercase leading-tight mt-2 break-words">{project.name}</h1>
             {project.description && <p className="text-zinc-700 mt-2 max-w-3xl">{project.description}</p>}
@@ -735,12 +1019,29 @@ export default function ProjectDetailPage() {
         <Tab active={tab==="tasks"} onClick={()=>setTab("tasks")} testid="tab-tasks" count={project.stats.tasks_total}>Tasks</Tab>
         <Tab active={tab==="logs"} onClick={()=>setTab("logs")} testid="tab-logs" count={project.stats.logs_this_week}>Daily Logs</Tab>
         <Tab active={tab==="issues"} onClick={()=>setTab("issues")} testid="tab-issues" count={project.stats.open_issues}>Issues</Tab>
+        <Tab active={tab==="members"} onClick={()=>setTab("members")} testid="tab-members" count={projectMembers.length}>Members</Tab>
       </div>
 
-      {tab === "overview" && <Overview project={project} members={members} onQuickAdd={onQuickAdd}/>}
-      {tab === "tasks" && <TasksPanel projectId={projectId} members={members} currentRole={currentRole}/>}
-      {tab === "logs" && <LogsPanel projectId={projectId} currentRole={currentRole}/>}
-      {tab === "issues" && <IssuesPanel projectId={projectId} members={members} currentRole={currentRole}/>}
+      {tab === "overview" && (
+        <Overview
+          project={project}
+          members={projectMembers}
+          onQuickAdd={onQuickAdd}
+          onOpenMembersTab={() => setTab("members")}
+        />
+      )}
+      {tab === "tasks" && <TasksPanel projectId={projectId} members={projectMembers} currentRole={effectiveRole}/>}
+      {tab === "logs" && <LogsPanel projectId={projectId} currentRole={effectiveRole}/>}
+      {tab === "issues" && <IssuesPanel projectId={projectId} members={projectMembers} currentRole={effectiveRole}/>}
+      {tab === "members" && (
+        <MembersPanel
+          projectId={projectId}
+          members={projectMembers}
+          orgMembers={orgMembers}
+          canManage={canManage}
+          onChanged={() => { reloadMembers(); load(); }}
+        />
+      )}
 
       <ConfirmDialog
         open={confirmArchive}
@@ -751,7 +1052,7 @@ export default function ProjectDetailPage() {
         onConfirm={()=>{ setConfirmArchive(false); archive(); }}
         testid="confirm-archive"
       />
-      {showEdit && <EditProjectModal project={project} members={members} onClose={()=>setShowEdit(false)} onSaved={()=>{setShowEdit(false); load();}}/>}
+      {showEdit && <EditProjectModal project={project} members={orgMembers} onClose={()=>setShowEdit(false)} onSaved={()=>{setShowEdit(false); load();}}/>}
     </div>
   );
 }

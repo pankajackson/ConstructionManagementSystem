@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from core.db import get_db
-from core.deps import get_current_membership, require_roles
+from core.deps import project_ctx, require_project_roles
 from core.response import envelope, paginate_meta
 from core.security import now_utc
 from core.utils import new_id
@@ -63,7 +63,7 @@ async def _project_or_404(db, project_id, org_id):
 async def create_task(
     project_id: str,
     payload: TaskCreate,
-    ctx: dict = Depends(require_roles("admin", "project_manager", "site_engineer")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager", "site_engineer")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
@@ -117,7 +117,7 @@ async def create_task(
 @router.get("")
 async def list_tasks(
     project_id: str,
-    ctx: dict = Depends(get_current_membership),
+    ctx: dict = Depends(project_ctx),
     status: str | None = None,
     assignee_id: str | None = None,
     priority: str | None = None,
@@ -173,7 +173,7 @@ async def list_tasks(
 
 
 @router.get("/export.csv")
-async def export_tasks_csv(project_id: str, ctx: dict = Depends(get_current_membership)):
+async def export_tasks_csv(project_id: str, ctx: dict = Depends(project_ctx)):
     db = get_db()
     org_id = ctx["organization"]["id"]
     await _project_or_404(db, project_id, org_id)
@@ -209,7 +209,7 @@ async def export_tasks_csv(project_id: str, ctx: dict = Depends(get_current_memb
 
 
 @router.get("/{task_id}")
-async def get_task(project_id: str, task_id: str, ctx: dict = Depends(get_current_membership)):
+async def get_task(project_id: str, task_id: str, ctx: dict = Depends(project_ctx)):
     db = get_db()
     org_id = ctx["organization"]["id"]
     t = await db.tasks.find_one({"id": task_id, "project_id": project_id, "organization_id": org_id, "deleted_at": None})
@@ -253,7 +253,7 @@ async def update_task(
     project_id: str,
     task_id: str,
     payload: TaskUpdate,
-    ctx: dict = Depends(require_roles("admin", "project_manager", "site_engineer")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager", "site_engineer")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
@@ -270,7 +270,7 @@ async def update_task(
     if new_status and new_status != old_status:
         # Linear default: todo -> in_progress -> done. Only admin/PM can move backwards.
         order = {"todo": 0, "in_progress": 1, "done": 2}
-        if order[new_status] < order[old_status] and ctx["membership"]["role"] not in ("admin", "project_manager"):
+        if order[new_status] < order[old_status] and ctx["effective_role"] not in ("admin", "project_manager"):
             raise HTTPException(status_code=403, detail="Only Admin or PM can revert task status.")
         await db.task_status_history.insert_one(
             {
@@ -306,11 +306,11 @@ async def add_comment(
     project_id: str,
     task_id: str,
     payload: TaskCommentCreate,
-    ctx: dict = Depends(require_roles("admin", "project_manager", "site_engineer", "viewer")),
+    ctx: dict = Depends(require_project_roles("admin", "project_manager", "site_engineer", "viewer")),
 ):
     db = get_db()
     org_id = ctx["organization"]["id"]
-    if ctx["membership"]["role"] == "viewer":
+    if ctx["effective_role"] == "viewer":
         raise HTTPException(status_code=403, detail="Viewers cannot comment.")
     task = await db.tasks.find_one({"id": task_id, "project_id": project_id, "organization_id": org_id, "deleted_at": None})
     if not task:

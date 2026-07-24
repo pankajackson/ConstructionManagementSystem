@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 3 — Project visibility filtering, per-project roles, and Team/Member Detail features. Backend: 70/70 pytest cases pass (49 existing regressions + 21 new for iteration 3). Verified: (a) viewer@demo.com sees ONLY Skyline in /projects, engineer sees BOTH, admin sees ALL; (b) my_roles field present per card, admin returns ['admin'], engineer contains 'site_engineer', viewer contains 'viewer'; (c) GET /projects/{green_id} as viewer returns 403; GET /projects/{skyline_id} returns 200 with my_role='viewer'; (d) Project members CRUD works — GET returns 3 members for Skyline, POST assigns with multi-roles, duplicate returns 409, PATCH updates roles, DELETE removes; (e) DELETE on the PM user returns 400 with the expected error message; (f) /organizations/current/members exposes projects_count, open_tasks_count, last_login_at; PM has projects_count≥2 (PM of both), viewer has =1 (Skyline only); (g) /organizations/current/members/{user_id} returns the shape {user, membership, projects[], task_stats(todo/in_progress/done/total/open), open_issues, recent_activity}; viewer detail shows only 1 project (Skyline) with role='viewer'; (h) RBAC — viewer cannot POST tasks on Skyline (403), engineer can, viewer 403 on Green Fields (non-member), PM can PATCH project, engineer cannot. Frontend: Playwright verified — viewer sees exactly 1 project card with 'YOUR ROLE: VIEWER' chip; Team page has search/role-filter/sort dropdowns + 9 clickable rows; MemberDetail shows all 5 stat cards + assigned-project list; Admin project detail Members tab renders with Assign Member button opening a modal that has 4 role-pick chips (admin/PM/site_engineer/viewer). All data-testids match the contract.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/v1/organizations/current/members/{user_id}", "issue": "For an org admin, 'projects' list only includes projects where they are project_manager or explicit project_member — not all projects in the org. This can look inconsistent with 'admin sees all' from /projects. Consider clarifying: 'projects_count' on the member row already reflects only assignments (not visibility), and MemberDetail follows the same convention. Non-blocking."},
+      {"endpoint": "GET /api/v1/projects/{id}/members", "issue": "When PM is stored implicitly (no project_members row), the returned row has id=null. Frontend still shows a pencil (edit-roles) for that row because the check keys off is_project_manager rather than id!=null; clicking edit would fail server-side (404) since no project_members row exists. Recommend hiding pencil when member.id is null, or auto-creating a project_members row on PM change. Frontend cosmetic edge."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ProjectDetail Members panel", "issue": "For implicit-PM row (no project_members doc), an edit-roles pencil is still shown; clicking it will hit a 404 PATCH. Guard by member.id!=null.", "selector": "[data-testid^=\"edit-roles-\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_project_visibility.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/iteration_3.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: In ProjectDetail Members panel, only show the edit-roles pencil when member.id is not null (implicit-PM rows have id=null and PATCH would 404). Alternatively, auto-create a project_members row for the PM on project create/patch.",
+    "OPTIONAL: Consider whether MemberDetail 'Projects assigned' for org admins should reflect all projects (they see them all) vs only assigned. Current: only assigned. This matches org member semantics but can confuse admins who see all projects on /projects. Doc it."
+  ],
+  "critical_code_review_comments": [
+    "projects.py list_projects — visibility filter is correct; get_accessible_project_ids returns None for admin (bypass) and union of project_members+PM otherwise. Good.",
+    "deps.resolve_project_access — good: 404 when project not found (not 403) prevents leaking existence to non-members; but for a member without any role, 403 with detail 'You do not have access to this project.' — matches spec.",
+    "projects.py assign_project_member — 409 on duplicate is correct; consider allowing an idempotent upsert (merge roles) as an option later.",
+    "orgs.py list_members — computes projects_count using union of project_members and implicit PM rows; correct. But if a user was BOTH the PM and had a project_members row, count is deduped via set — good.",
+    "orgs.py get_member_detail — combines pm_docs + PM projects; roles_by_project only pulls from pm_docs, then adds 'project_manager' via is_pm flag. Note: if a project_members row already contains 'project_manager', we correctly avoid duplicate via the 'not in roles' guard.",
+    "ProjectDetail MembersPanel — pencil visible on implicit-PM row (id=null) leads to a 404 on PATCH. Minor UX bug; guard on member.id.",
+    "server.py migrate_project_members — runs at startup and backfills from projects.project_manager_id. Good idempotent migration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (NEW: shared demo_sessions fixture to avoid OTP rate limits across test files)",
+    "/app/backend/tests/test_project_visibility.py (NEW: 21 tests for iteration 3)",
+    "/app/backend/tests/backend_test.py (fixed 3 fixtures to pin to Skyline seeded project instead of arbitrary projects[0] — previously broke because PM-created test projects now hide from engineer under the new visibility filter)"
+  ],
+  "success_rate": {"backend": "100% (70/70)", "frontend": "100% for smoke-tested flows (viewer projects list + role chip, Team list + Member Detail, Admin Members tab with Assign modal & role chips)"},
+  "test_credentials": "Unchanged: OTP dev mode. admin/pm/engineer/viewer @demo.com in 'Demo Constructions Pvt Ltd'. Note: shared conftest.py logs in each demo user ONCE per pytest session to avoid the 10-OTP/hour/email rate limit — required now that both suites run together.",
+  "seed_data_creation": "Tests create TEST_ prefixed projects, tasks, members, ephemeral pmember_* users (via invite). No cleanup needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend + iter-3 frontend smoke tests pass. Suite: `cd /app/backend && pytest tests/ -v` — 70 passing. If you re-run within an hour of another run, you may hit OTP rate limits — clear via `db.otp_codes.delete_many({})`. Known cosmetic frontend bug: edit-roles pencil is shown for implicit-PM row (id=null); not blocking. Playwright coverage only sanity-checked the primary flows (viewer visibility, Team+MemberDetail, Members tab modal). Deeper flows to explore in future: (a) actually completing an Assign Member → confirm member row appears, (b) Edit-roles pencil PATCH flow, (c) Trash icon confirm-and-remove flow, (d) admin login as PM to test 'admin can Assign Member' vs PM can Assign Member permission.",
+  "rca of the issue": "N/A — all tests pass. Two initial suite errors were due to (i) empty REACT_APP_BACKEND_URL default in the new test file (fixed by using the same default as backend_test.py) and (ii) old backend_test.py fixture using projects[0] which is now unpredictable when PM has created TEST_ projects visible only to admin — fixed by pinning to Skyline. Third issue was OTP rate limit exhaustion from double-login across files; fixed by introducing tests/conftest.py with session-scoped shared demo_sessions and refactoring both suites to consume it."
+}
